@@ -18,6 +18,10 @@ class FPUIO extends Bundle {
     val rm = Input(UInt(3.W))          // 舍入模式
     val res = Output(UInt(32.W))       // 运算结果
     val fflags = Output(UInt(5.W))     // 浮点异常标志 {NV, DZ, OF, UF, NX}
+    val faddResult = Output(UInt(32.W))
+    val faddFflags = Output(UInt(5.W))
+    val fmulResult = Output(UInt(32.W))
+    val fmulFflags = Output(UInt(5.W))
 }
 
 class FPU extends Module {
@@ -127,5 +131,12 @@ class FPU extends Module {
         (io.op === FMUL_S) -> fmul.io.fflags,
         (io.op === FEQ_S || io.op === FLT_S || io.op === FLE_S) -> fcmp.io.fflags
     ))
+
+    // The arithmetic units have different internal latencies. Pipelines use
+    // these unselected outputs to align each result with its instruction.
+    io.faddResult := fadd.io.result
+    io.faddFflags := fadd.io.fflags
+    io.fmulResult := fmul.io.result
+    io.fmulFflags := fmul.io.fflags
 }
 

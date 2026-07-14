@@ -54,15 +54,24 @@ class FDivFPUPipeline extends Module {
     fpu.io.op := ex1Pkg.op
     fpu.io.rm := ex1Pkg.rm
     
-    // EX1阶段更新InstPkg
+    // 组合浮点操作在EX1末保存；FADD和FMUL按内部延迟在后续阶段保存。
     val ex1PkgOut = ex1Pkg.EX1Update(alu.io.res, 0.U, false.B)
+    val ex1IsAdd = ex1Pkg.op === ZirconConfig.EXEOp.FADD_S ||
+                   ex1Pkg.op === ZirconConfig.EXEOp.FSUB_S
+    val ex1IsMul = ex1Pkg.op === ZirconConfig.EXEOp.FMUL_S
+    val ex1IsImmediateFpu = ex1Pkg.op(6) && !ex1IsAdd && !ex1IsMul
+    val ex1PkgOutWithFpu = Mux(
+        ex1IsImmediateFpu,
+        ex1PkgOut.EX3Update(fpu.io.res, fpu.io.fflags),
+        ex1PkgOut
+    )
     
     // ========== EX2阶段 ==========
     val ex2Pkg = RegInit(0.U.asTypeOf(new InstructionPackage))
     when(io.hazard.ex2Flush) {
         ex2Pkg := 0.U.asTypeOf(new InstructionPackage)
     }.elsewhen(!io.hazard.ex2Stall) {
-        ex2Pkg := ex1PkgOut
+        ex2Pkg := ex1PkgOutWithFpu
     }
     
     // ========== EX3阶段 ==========
@@ -70,12 +79,15 @@ class FDivFPUPipeline extends Module {
     when(io.hazard.ex3Flush) {
         ex3Pkg := 0.U.asTypeOf(new InstructionPackage)
     }.elsewhen(!io.hazard.ex3Stall) {
-        // EX3阶段更新fpuResult（根据是否是FDiv选择结果）
+        // EX3阶段更新FDiv或内部一级流水的FADD结果。
         val isFDiv = ex2Pkg.op === ZirconConfig.EXEOp.FDIV_S || 
                      ex2Pkg.op === ZirconConfig.EXEOp.FSQRT_S
-        val fpuRes = Mux(isFDiv, fdiv.io.res, fpu.io.res)
-        val fpuFlags = Mux(isFDiv, fdiv.io.fflags, fpu.io.fflags)
-        ex3Pkg := ex2Pkg.EX3Update(fpuRes, fpuFlags)
+        val isFAdd = ex2Pkg.op === ZirconConfig.EXEOp.FADD_S ||
+                     ex2Pkg.op === ZirconConfig.EXEOp.FSUB_S
+        ex3Pkg := MuxCase(ex2Pkg, Seq(
+            isFDiv -> ex2Pkg.EX3Update(fdiv.io.res, fdiv.io.fflags),
+            isFAdd -> ex2Pkg.EX3Update(fpu.io.faddResult, fpu.io.faddFflags)
+        ))
     }
     
     // ========== WB阶段 ==========
@@ -83,13 +95,20 @@ class FDivFPUPipeline extends Module {
     when(io.hazard.wbFlush) {
         wbPkg := 0.U.asTypeOf(new InstructionPackage)
     }.elsewhen(!io.hazard.wbStall) {
-        wbPkg := ex3Pkg
+        val ex3IsMul = ex3Pkg.op === ZirconConfig.EXEOp.FMUL_S
+        wbPkg := Mux(
+            ex3IsMul,
+            ex3Pkg.EX3Update(fpu.io.fmulResult, fpu.io.fmulFflags),
+            ex3Pkg
+        )
     }
     
     // WB阶段：根据rd类型选择写回数据
-    // rd[5]=0: GPR (使用ALU结果)，rd[5]=1: FPR (使用FPU结果)
+    // 浮点比较/转换也可能写GPR，写回数据必须按操作类型选择。
     val isGPR = !wbPkg.rd(5)
-    val wbData = Mux(isGPR, wbPkg.aluResult, wbPkg.fpuResult)
+    val isFpuResult = wbPkg.op(6) || wbPkg.op === ZirconConfig.EXEOp.FDIV_S ||
+                      wbPkg.op === ZirconConfig.EXEOp.FSQRT_S
+    val wbData = Mux(isFpuResult, wbPkg.fpuResult, wbPkg.aluResult)
     val wbPkgOut = wbPkg.WBUpdate(wbData)
     
     // 写回到寄存器堆

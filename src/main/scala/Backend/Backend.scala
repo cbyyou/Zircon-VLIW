@@ -16,9 +16,9 @@ class BackendFrontendIO extends Bundle {
     val gprWen = Output(Vec(8, Bool()))      // 8个GPR写口（流水线0现在也支持ALU）
     val gprWaddr = Output(Vec(8, UInt(5.W)))
     val gprWdata = Output(Vec(8, UInt(32.W)))
-    val fprWen = Output(Vec(3, Bool()))      // 3个FPR写口
-    val fprWaddr = Output(Vec(3, UInt(5.W)))
-    val fprWdata = Output(Vec(3, UInt(32.W)))
+    val fprWen = Output(Vec(5, Bool()))      // 流水线0-2 FPU和流水线5-6 FLW
+    val fprWaddr = Output(Vec(5, UInt(5.W)))
+    val fprWdata = Output(Vec(5, UInt(32.W)))
     
     // 分支预测失败信号和跳转地址
     val predFail = Output(Bool())
@@ -182,9 +182,10 @@ class Backend extends Module {
         io.frontend.gprWdata(i) := p.io.frontend.gprWdata
     }
     
-    // FPR写口分配：流水线0-2各1个，共3个
-    for (i <- 0 until 3) {
-        val p = pipelines(i).asInstanceOf[{ 
+    // FPR写口分配：流水线0-2执行FPU，流水线5-6执行FLW
+    val fprPipelines = Seq(pipeline0, pipeline1, pipeline2, pipeline5, pipeline6)
+    for (i <- 0 until 5) {
+        val p = fprPipelines(i).asInstanceOf[{
             def io: { 
                 def frontend: { 
                     def fprWen: Bool

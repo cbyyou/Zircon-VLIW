@@ -144,8 +144,12 @@ class Decoder(ALU: Boolean, FPU: Boolean, Branch: Boolean, Mem: Boolean, IMulDiv
     val src1Sel   = selectSignal(2)
     val src2Sel   = selectSignal(3)
     val rdValid_raw = selectSignal(4)
-    val rs1       = selectSignal(5) ## io.instPkgIn.inst(19, 15)
-    val rs2       = selectSignal(5) ## io.instPkgIn.inst(24, 20)
+    // FSW is the mixed-register-file case: its address base is in a GPR,
+    // while the value being stored is in an FPR.
+    val rs1IsFloat = selectSignal(5)
+    val rs2IsFloat = Mux(op === FSW, Y, selectSignal(5))
+    val rs1       = rs1IsFloat ## io.instPkgIn.inst(19, 15)
+    val rs2       = rs2IsFloat ## io.instPkgIn.inst(24, 20)
     val rs3       = selectSignal(5) ## io.instPkgIn.inst(31, 27)
     val rd        = selectSignal(6) ## io.instPkgIn.inst(11, 7)
     
@@ -162,8 +166,10 @@ class Decoder(ALU: Boolean, FPU: Boolean, Branch: Boolean, Mem: Boolean, IMulDiv
         B_TYPE -> SE(inst(31) ## inst(7) ## inst(30, 25) ## inst(11, 8) ## 0.U(1.W), 32),
     ))
 
-    // rm (rounding mode) 位于 inst[14:12]
-    val rm = io.instPkgIn.inst(14, 12)
+    // Temporary FCSR fallback: dynamic rounding (111) uses the reset-default
+    // RNE mode until frm is implemented and connected.
+    val encodedRm = io.instPkgIn.inst(14, 12)
+    val rm = Mux(encodedRm === "b111".U, "b000".U, encodedRm)
 
     io.instPkgOut := io.instPkgIn.IDUpdate(rs1, rs2, rs3, rd, rdValid, op, rm, immGen(immType, io.instPkgIn.inst), src1Sel, src2Sel)
 }

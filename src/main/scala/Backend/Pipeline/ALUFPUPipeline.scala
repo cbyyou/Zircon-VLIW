@@ -44,15 +44,34 @@ class ALUFPUPipeline(val convertType: Int = 0) extends Module {
     fpuConvert.io.op := ex1Pkg.op
     fpuConvert.io.rm := ex1Pkg.rm
     
-    // EX1阶段更新InstPkg
+    // EX1阶段更新InstPkg。组合浮点操作在这里保存结果；FADD和FMUL
+    // 分别由后续阶段按其内部1级和2级流水延迟保存。
     val ex1PkgOut = ex1Pkg.EX1Update(alu.io.res, 0.U, false.B)
+    val ex1IsConvert = if (convertType == 1) {
+        ex1Pkg.op === ZirconConfig.EXEOp.FCVT_W_S ||
+        ex1Pkg.op === ZirconConfig.EXEOp.FCVT_WU_S
+    } else {
+        ex1Pkg.op === ZirconConfig.EXEOp.FCVT_S_W ||
+        ex1Pkg.op === ZirconConfig.EXEOp.FCVT_S_WU
+    }
+    val ex1IsAdd = ex1Pkg.op === ZirconConfig.EXEOp.FADD_S ||
+                   ex1Pkg.op === ZirconConfig.EXEOp.FSUB_S
+    val ex1IsMul = ex1Pkg.op === ZirconConfig.EXEOp.FMUL_S
+    val ex1IsImmediateFpu = ex1Pkg.op(6) && !ex1IsAdd && !ex1IsMul
+    val ex1ImmediateRes = Mux(ex1IsConvert, fpuConvert.io.res, fpu.io.res)
+    val ex1ImmediateFlags = Mux(ex1IsConvert, fpuConvert.io.fflags, fpu.io.fflags)
+    val ex1PkgOutWithFpu = Mux(
+        ex1IsImmediateFpu,
+        ex1PkgOut.EX3Update(ex1ImmediateRes, ex1ImmediateFlags),
+        ex1PkgOut
+    )
     
     // ========== EX2阶段 ==========
     val ex2Pkg = RegInit(0.U.asTypeOf(new InstructionPackage))
     when(io.hazard.ex2Flush) {
         ex2Pkg := 0.U.asTypeOf(new InstructionPackage)
     }.elsewhen(!io.hazard.ex2Stall) {
-        ex2Pkg := ex1PkgOut
+        ex2Pkg := ex1PkgOutWithFpu
     }
     
     // ========== EX3阶段 ==========
@@ -60,19 +79,13 @@ class ALUFPUPipeline(val convertType: Int = 0) extends Module {
     when(io.hazard.ex3Flush) {
         ex3Pkg := 0.U.asTypeOf(new InstructionPackage)
     }.elsewhen(!io.hazard.ex3Stall) {
-        // EX3阶段：选择 FPU 或类型转换结果
-        // 保存 EX2 阶段的 isConvert 判断结果
-        val ex2IsConvert = if (convertType == 1) {
-            ex2Pkg.op === ZirconConfig.EXEOp.FCVT_W_S || 
-            ex2Pkg.op === ZirconConfig.EXEOp.FCVT_WU_S
-        } else {
-            ex2Pkg.op === ZirconConfig.EXEOp.FCVT_S_W || 
-            ex2Pkg.op === ZirconConfig.EXEOp.FCVT_S_WU
-        }
-        
-        val fpuRes = Mux(ex2IsConvert, fpuConvert.io.res, fpu.io.res)
-        val fpuFlags = Mux(ex2IsConvert, fpuConvert.io.fflags, fpu.io.fflags)
-        ex3Pkg := ex2Pkg.EX3Update(fpuRes, fpuFlags)
+        val ex2IsAdd = ex2Pkg.op === ZirconConfig.EXEOp.FADD_S ||
+                       ex2Pkg.op === ZirconConfig.EXEOp.FSUB_S
+        ex3Pkg := Mux(
+            ex2IsAdd,
+            ex2Pkg.EX3Update(fpu.io.faddResult, fpu.io.faddFflags),
+            ex2Pkg
+        )
     }
     
     // ========== WB阶段 ==========
@@ -80,7 +93,12 @@ class ALUFPUPipeline(val convertType: Int = 0) extends Module {
     when(io.hazard.wbFlush) {
         wbPkg := 0.U.asTypeOf(new InstructionPackage)
     }.elsewhen(!io.hazard.wbStall) {
-        wbPkg := ex3Pkg
+        val ex3IsMul = ex3Pkg.op === ZirconConfig.EXEOp.FMUL_S
+        wbPkg := Mux(
+            ex3IsMul,
+            ex3Pkg.EX3Update(fpu.io.fmulResult, fpu.io.fmulFflags),
+            ex3Pkg
+        )
     }
     
     // WB阶段：选择写回数据（FPU指令用fpuResult，ALU指令用aluResult）
