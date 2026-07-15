@@ -28,6 +28,7 @@ class Hazard extends Module {
     // 任意一条流水线阻塞时，所有8条流水线保持同步。
     val executionStall = io.backend.pipelineBusy.asUInt.orR
     val globalStall = executionStall || io.backend.memBusy
+    val executionStarting = io.backend.pipelineStart.asUInt.orR
     when(globalStall) {
         // 对前端发起停顿
         io.frontend.stall := true.B
@@ -56,6 +57,15 @@ class Hazard extends Module {
             io.backend.ex2Flush(i) := true.B
         }
     }
+
+    // A variable-latency request may not assert busy until the next cycle.
+    // Let the issuing packet advance, but keep the younger ID packet out of EX1.
+    when(!globalStall && !io.backend.predFail && executionStarting) {
+        io.frontend.stall := true.B
+        for (i <- 0 until 8) {
+            io.backend.ex1Flush(i) := true.B
+        }
+    }
     
     // ========== 3. RAW数据相关处理 ==========
     // 判断指令是否需要WB阶段才能访问（load/mul/div/float）
@@ -66,6 +76,16 @@ class Hazard extends Module {
         // FDiv 需要根据操作码判断，而不是流水线编号
         val isFDiv = (op === ZirconConfig.EXEOp.FDIV_S) || (op === ZirconConfig.EXEOp.FSQRT_S)
         isLoad || isMulDiv || isFloat || isFDiv
+    }
+
+    def blocksConsumerInEx1(pkg: InstructionPackage, pipelineIdx: Int): Bool = {
+        val isFloat = FloatBypass.isFloatProducer(pkg, pipelineIdx)
+        Mux(isFloat, !FloatBypass.availableInEx2(pkg, pipelineIdx), needWB(pkg.op, pipelineIdx))
+    }
+
+    def blocksConsumerInEx2(pkg: InstructionPackage, pipelineIdx: Int): Bool = {
+        val isFloat = FloatBypass.isFloatProducer(pkg, pipelineIdx)
+        Mux(isFloat, !FloatBypass.availableInEx3(pkg, pipelineIdx), needWB(pkg.op, pipelineIdx))
     }
     
     // 检查RAW冲突：ID阶段的指令依赖EX1或EX2阶段的指令
@@ -78,7 +98,7 @@ class Hazard extends Module {
         // 检查与EX1阶段的冲突
         for (ex1Idx <- 0 until 8) {
             val ex1Pkg = io.backend.ex1Pkgs(ex1Idx)
-            when(ex1Pkg.rdValid && needWB(ex1Pkg.op, ex1Idx)) {
+            when(ex1Pkg.rdValid && blocksConsumerInEx1(ex1Pkg, ex1Idx)) {
                 // 检查rs1, rs2, rs3是否与rd相关
                 val rs1Match = idPkg.rs1 === ex1Pkg.rd
                 val rs2Match = idPkg.rs2 === ex1Pkg.rd
@@ -92,7 +112,7 @@ class Hazard extends Module {
         // 检查与EX2阶段的冲突
         for (ex2Idx <- 0 until 8) {
             val ex2Pkg = io.backend.ex2Pkgs(ex2Idx)
-            when(ex2Pkg.rdValid && needWB(ex2Pkg.op, ex2Idx)) {
+            when(ex2Pkg.rdValid && blocksConsumerInEx2(ex2Pkg, ex2Idx)) {
                 val rs1Match = idPkg.rs1 === ex2Pkg.rd
                 val rs2Match = idPkg.rs2 === ex2Pkg.rd
                 val rs3Match = (idIdx < 3).B && (idPkg.rs3 === ex2Pkg.rd)
@@ -105,7 +125,7 @@ class Hazard extends Module {
     
     // RAW冲突处理：如果没有全局停顿和分支冲刷，则处理RAW冲突
     // 注意：分支冲刷优先于RAW stall，否则PC无法更新到正确的跳转地址
-    when(!globalStall && !io.backend.predFail && rawHazard) {
+    when(!globalStall && !io.backend.predFail && !executionStarting && rawHazard) {
         // 对前端发起停顿
         io.frontend.stall := true.B
         // 冲刷ID-EX1寄存器

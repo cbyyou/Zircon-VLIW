@@ -44,28 +44,32 @@ class Forward extends Module {
             val matches = Wire(Vec(24, Bool()))  // 8个EX2 + 8个EX3 + 8个WB
             val data = Wire(Vec(24, UInt(32.W)))
 
-            def isFloatOp(pkg: InstructionPackage): Bool = {
-                pkg.op(6) || pkg.op === ZirconConfig.EXEOp.FDIV_S ||
-                pkg.op === ZirconConfig.EXEOp.FSQRT_S
-            }
-            
             // 检查EX2阶段的前递（优先级最高）
             for (j <- 0 until 8) {
-                // Floating-point results are not aligned on the ALU bypass path.
-                val canFwd = ex2CanForward(j) && io.ex2Pkgs(j).rdValid &&
-                             !isFloatOp(io.ex2Pkgs(j))
-                val addrMatch = io.ex2Pkgs(j).rd === rsAddr
+                val pkg = io.ex2Pkgs(j)
+                val isFloat = FloatBypass.isFloatProducer(pkg, j)
+                val canFwd = pkg.rdValid && Mux(
+                    isFloat,
+                    FloatBypass.availableInEx2(pkg, j),
+                    ex2CanForward(j)
+                )
+                val addrMatch = pkg.rd === rsAddr
                 matches(j) := canFwd && addrMatch
-                data(j) := io.ex2Pkgs(j).aluResult
+                data(j) := Mux(isFloat, FloatBypass.ex2Data(pkg), pkg.aluResult)
             }
             
             // 检查EX3阶段的前递（优先级中等）
             for (j <- 0 until 8) {
-                val canFwd = ex3CanForward(j) && io.ex3Pkgs(j).rdValid &&
-                             !isFloatOp(io.ex3Pkgs(j))
-                val addrMatch = io.ex3Pkgs(j).rd === rsAddr
+                val pkg = io.ex3Pkgs(j)
+                val isFloat = FloatBypass.isFloatProducer(pkg, j)
+                val canFwd = pkg.rdValid && Mux(
+                    isFloat,
+                    FloatBypass.availableInEx3(pkg, j),
+                    ex3CanForward(j)
+                )
+                val addrMatch = pkg.rd === rsAddr
                 matches(j + 8) := canFwd && addrMatch
-                data(j + 8) := io.ex3Pkgs(j).aluResult
+                data(j + 8) := Mux(isFloat, FloatBypass.ex3Data(pkg, j), pkg.aluResult)
             }
             
             // 检查WB阶段的前递（优先级最低）

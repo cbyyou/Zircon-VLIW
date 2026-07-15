@@ -44,6 +44,9 @@ class BackendHazardIO extends Bundle {
     // 任意流水线需要保持时都会触发全局停顿
     val pipelineBusy = Output(Vec(8, Bool()))
 
+    // 可变延迟单元在EX1接受请求，用于阻止更年轻的包进入EX1
+    val pipelineStart = Output(Vec(8, Bool()))
+
     // 当前访存接口为零等待；为后续带握手的内存系统预留
     val memBusy = Output(Bool())
     
@@ -159,6 +162,17 @@ class Backend extends Module {
         false.B,
         pipeline3.io.hazard.divBusy,
         pipeline4.io.hazard.divBusy,
+        false.B,
+        false.B,
+        false.B
+    ))
+
+    io.hazard.pipelineStart := VecInit(Seq(
+        pipeline0.io.hazard.fdivStart,
+        false.B,
+        false.B,
+        pipeline3.io.hazard.divStart,
+        pipeline4.io.hazard.divStart,
         false.B,
         false.B,
         false.B

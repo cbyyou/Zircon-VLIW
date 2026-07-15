@@ -4,6 +4,7 @@ import chisel3.util._
 class ALUiMDPipelineHazardIO extends PipelineHazardIO {
     // 除法器busy信号，传递给Hazard做阻塞判断
     val divBusy = Output(Bool())
+    val divStart = Output(Bool())
 }
 
 class ALUiMDPipelineIO extends Bundle {
@@ -42,6 +43,7 @@ class ALUiMDPipeline extends Module {
     val divComplete = divActive && srt2.io.ready
     val divRequest = ex1Pkg.rdValid && isDivOp && (!divActive || divComplete)
     srt2.io.valid := divRequest
+    io.hazard.divStart := divRequest
 
     when(divRequest) {
         divActive := true.B

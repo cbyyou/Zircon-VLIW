@@ -4,6 +4,7 @@ import chisel3.util._
 // FDivFPUPipeline 特有的 Hazard IO（包含 FDiv busy 信号）
 class FDivFPUPipelineHazardIO extends PipelineHazardIO {
     val fdivBusy = Output(Bool())
+    val fdivStart = Output(Bool())
 }
 
 class FDivFPUPipelineIO extends Bundle {
@@ -60,6 +61,7 @@ class FDivFPUPipeline extends Module {
     fdiv.io.rs1Data := Mux(queuedFdivOperands, queuedFdivRs1, ex1Rs1Data)
     fdiv.io.rs2Data := Mux(queuedFdivOperands, queuedFdivRs2, ex1Rs2Data)
     fdiv.io.valid := fdivRequest
+    io.hazard.fdivStart := fdivRequest && fdiv.io.ready
     // ex1Flush 仅阻止更年轻的 ID 指令进入 EX1，不应取消当前 EX1 的 FDiv。
     fdiv.io.kill := io.hazard.ex2Flush || io.hazard.ex3Flush
 
@@ -140,8 +142,7 @@ class FDivFPUPipeline extends Module {
     io.frontend.fprWaddr := wbPkgOut.rd(4, 0)
     io.frontend.fprWdata := wbPkgOut.rfWdata
     
-    // 输出到Forward和Hazard
-    // 注意：FDivFPUPipeline在EX2和EX3阶段不能前递（根据文档表格）
+    // 输出到Forward和Hazard；具体前递阶段由 FloatBypass 按操作延迟选择。
     io.forward.ex1Pkg := ex1Pkg
     io.forward.ex2Pkg := ex2Pkg
     io.forward.ex3Pkg := ex3Pkg
