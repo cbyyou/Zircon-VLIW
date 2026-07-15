@@ -35,16 +35,34 @@ class FDivFPUPipeline extends Module {
     
     // FDiv实例化
     val fdiv = Module(new FDivWrapper)
-    fdiv.io.rs1Data := ex1Rs1Data
-    fdiv.io.rs2Data := ex1Rs2Data
     fdiv.io.op := ex1Pkg.op
     fdiv.io.rm := ex1Pkg.rm
     // 判断是否是 FDiv 指令
     val isFDivOp = ex1Pkg.op === ZirconConfig.EXEOp.FDIV_S || 
                    ex1Pkg.op === ZirconConfig.EXEOp.FSQRT_S
-    fdiv.io.valid := ex1Pkg.rdValid && isFDivOp
-    // 分支预测失败或流水线冲刷时终止 FDiv 运算
-    fdiv.io.kill := io.hazard.ex1Flush || io.hazard.ex2Flush || io.hazard.ex3Flush
+    val fdivRequest = ex1Pkg.rdValid && isFDivOp
+    val queuedFdivOperands = RegInit(false.B)
+    val queuedFdivRs1 = Reg(UInt(32.W))
+    val queuedFdivRs2 = Reg(UInt(32.W))
+
+    when(fdiv.io.busy && fdivRequest && !queuedFdivOperands) {
+        // WB forwarding can disappear while the preceding divide stalls the
+        // machine, so preserve the next operation's resolved operands.
+        queuedFdivOperands := true.B
+        queuedFdivRs1 := ex1Rs1Data
+        queuedFdivRs2 := ex1Rs2Data
+    }.elsewhen(fdivRequest && fdiv.io.ready) {
+        queuedFdivOperands := false.B
+    }.elsewhen(!fdivRequest) {
+        queuedFdivOperands := false.B
+    }
+
+    fdiv.io.rs1Data := Mux(queuedFdivOperands, queuedFdivRs1, ex1Rs1Data)
+    fdiv.io.rs2Data := Mux(queuedFdivOperands, queuedFdivRs2, ex1Rs2Data)
+    fdiv.io.valid := fdivRequest
+    // ex1Flush 仅阻止更年轻的 ID 指令进入 EX1，不应取消当前 EX1 的 FDiv。
+    fdiv.io.kill := io.hazard.ex2Flush || io.hazard.ex3Flush
+
     
     // FPU实例化
     val fpu = Module(new FPU)
@@ -53,6 +71,9 @@ class FDivFPUPipeline extends Module {
     fpu.io.rs3Data := ex1Rs3Data
     fpu.io.op := ex1Pkg.op
     fpu.io.rm := ex1Pkg.rm
+    fpu.io.faddAdvance := !io.hazard.ex2Stall
+    fpu.io.fmulStage1Advance := !io.hazard.ex2Stall
+    fpu.io.fmulStage2Advance := !io.hazard.ex3Stall
     
     // 组合浮点操作在EX1末保存；FADD和FMUL按内部延迟在后续阶段保存。
     val ex1PkgOut = ex1Pkg.EX1Update(alu.io.res, 0.U, false.B)
@@ -129,5 +150,7 @@ class FDivFPUPipeline extends Module {
     io.hazard.ex2Pkg := ex2Pkg
     
     // FDiv busy 信号
+    // The request cycle advances the package into EX2. Busy then holds it
+    // there until the variable-latency result can advance into EX3.
     io.hazard.fdivBusy := fdiv.io.busy
 }

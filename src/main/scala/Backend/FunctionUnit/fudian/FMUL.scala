@@ -260,6 +260,8 @@ class FMUL(val expWidth: Int, val precision: Int) extends Module {
   val io = IO(new Bundle() {
     val a, b = Input(UInt((expWidth + precision).W))
     val rm = Input(UInt(3.W))
+    val stage1Advance = Input(Bool())
+    val stage2Advance = Input(Bool())
     val result = Output(UInt((expWidth + precision).W))
     val fflags = Output(UInt(5.W))
     val to_fadd = Output(new FMULToFADD(expWidth, precision))
@@ -281,7 +283,7 @@ class FMUL(val expWidth: Int, val precision: Int) extends Module {
 
   // printf("a sig: %b b sig: %b\n",raw_a.exp, raw_b.exp)
 
-  multiplier.io.regEnables.foreach(_ := true.B)
+  multiplier.io.regEnables.foreach(_ := io.stage1Advance)
 
   fmul_s1.io.a := io.a
   fmul_s1.io.b := io.b
@@ -305,11 +307,11 @@ class FMUL(val expWidth: Int, val precision: Int) extends Module {
     _.may_be_subnormal -> false.B,
     _.rm -> 0.UInt(3.W),
   ), true.B)*/
-  fmul_s2.io.in := ShiftRegister(fmul_s1.io.out, 1, 0.U.asTypeOf(new FMUL_s1_to_s2(expWidth, precision)), true.B)
-  fmul_s2.io.prod := ShiftRegister(multiplier.io.result, 1, 0.U, true.B)
+  fmul_s2.io.in := ShiftRegister(fmul_s1.io.out, 1, 0.U.asTypeOf(new FMUL_s1_to_s2(expWidth, precision)), io.stage1Advance)
+  fmul_s2.io.prod := ShiftRegister(multiplier.io.result, 1, 0.U, io.stage1Advance)
 
   //fmul_s3.io.in := fmul_s2.io.out
-  fmul_s3.io.in := ShiftRegister(fmul_s2.io.out, 1, 0.U.asTypeOf(new FMUL_s2_to_s3(expWidth, precision)), true.B)
+  fmul_s3.io.in := ShiftRegister(fmul_s2.io.out, 1, 0.U.asTypeOf(new FMUL_s2_to_s3(expWidth, precision)), io.stage2Advance)
 
   io.to_fadd := fmul_s3.io.to_fadd
   io.result := fmul_s3.io.result

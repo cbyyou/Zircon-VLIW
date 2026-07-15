@@ -19,6 +19,8 @@ class FCMA(val expWidth: Int, val precision: Int) extends Module {
   fmul.io.a := io.a
   fmul.io.b := io.b
   fmul.io.rm := io.rm
+  fmul.io.stage1Advance := true.B
+  fmul.io.stage2Advance := true.B
 
   val mul_to_fadd = fmul.io.to_fadd
   fadd.io.a := Cat(io.c, 0.U(precision.W))
@@ -26,6 +28,7 @@ class FCMA(val expWidth: Int, val precision: Int) extends Module {
   fadd.io.b_inter_valid := true.B
   fadd.io.b_inter_flags := mul_to_fadd.inter_flags
   fadd.io.rm := io.rm
+  fadd.io.advance := true.B
 
   io.result := fadd.io.result
   io.fflags := fadd.io.fflags

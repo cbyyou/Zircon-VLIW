@@ -7,6 +7,7 @@ class SRT2IO extends Bundle {
     val src1  = Input(UInt(32.W))
     val src2  = Input(UInt(32.W))
     val op    = Input(UInt(5.W))
+    val valid = Input(Bool())
     val res   = Output(UInt(32.W))
     val busy  = Output(Bool())
     val ready = Output(Bool())
@@ -30,18 +31,19 @@ class SRT2 extends Module {
     // val src1Abs  = Mux(!io.op(0) && signSrc1, src1Neg, io.src1)
     // val src2Abs  = Mux(!io.op(0) && signSrc2, src2Neg, io.src2)
 
-    val src1S2    = ShiftRegister(io.src1, 1, 0.U, !io.busy)
-    val src2S2    = ShiftRegister(io.src2, 1, 0.U, !io.busy)
-    val resSignS2 = ShiftRegister(resSign, 1, false.B, !io.busy)
-    val src1NegS2 = ShiftRegister(src1Neg, 1, 0.U, !io.busy)
-    val src2NegS2 = ShiftRegister(src2Neg, 1, 0.U, !io.busy)
-    val opS2      = ShiftRegister(io.op, 1, 0.U, !io.busy)
+    val src1S2    = ShiftRegister(io.src1, 1, 0.U, io.valid)
+    val src2S2    = ShiftRegister(io.src2, 1, 0.U, io.valid)
+    val resSignS2 = ShiftRegister(resSign, 1, false.B, io.valid)
+    val src1NegS2 = ShiftRegister(src1Neg, 1, 0.U, io.valid)
+    val src2NegS2 = ShiftRegister(src2Neg, 1, 0.U, io.valid)
+    val opS2      = ShiftRegister(io.op, 1, 0.U, io.valid)
+    val validS2   = ShiftRegister(io.valid, 1, false.B, !io.busy)
     
     val src1AbsS2 = Mux(!opS2(0) && src1S2(31), src1NegS2, src1S2)(31, 0)
     val src2AbsS2 = Mux(!opS2(0) && src2S2(31), src2NegS2, src2S2)(31, 0)
 
 
-    val en       = opS2(2) && opS2(4)
+    val en       = validS2 && opS2(2) && opS2(4)
     val iter     = RegInit(63.U(6.W))
     val rmdReg   = RegInit(0.U(65.W))
     val rmdMReg  = RegInit(0.U(33.W))
@@ -113,8 +115,10 @@ class SRT2 extends Module {
     val resSignS3   = ShiftRegister(resSignS2, 1, false.B, iter(5))
     val src1S3      = ShiftRegister(src1S2, 1, 0.U, iter(5))
     val opS3        = ShiftRegister(opS2, 1, 0.U, iter(5))
+    val validS3     = ShiftRegister(validS2, 1, false.B, iter(5))
     val divS3IsZero = divReg === 0.U
-    val readyS3     = iter(5) && opS3(2)
+    val readyS3     = iter(5) && validS3 && opS3(2)
+    val readyReg    = RegNext(readyS3, false.B)
     val src2LeadingZerosS3 = ShiftRegister(src2LeadingZeros, 1, 0.U, iter(5))
     val quotientS3  = BLevelPAdder32(adder.io.res, Mux(rmdReg(64), 0xFFFFFFFFL.U(32.W), 0.U), 0.U).io.res
     val remainderS3 = BLevelPAdder32(rmdReg(63, 32), Mux(rmdReg(64), divReg, 0.U), 0.U).io.res >> src2LeadingZerosS3
@@ -132,7 +136,7 @@ class SRT2 extends Module {
     resultAdder.io.src2 := 0.U
     resultAdder.io.cin  := !opS3(0) && resSignS3 && !divS3IsZero
     io.res              := resultAdder.io.res
-    io.ready            := readyS3
+    io.ready            := readyReg
 
     val busyCycleReg = RegInit(0.U(64.W))
     busyCycleReg     := busyCycleReg + io.busy

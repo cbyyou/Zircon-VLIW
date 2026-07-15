@@ -37,6 +37,9 @@ class ALUFPUPipeline(val convertType: Int = 0) extends Module {
     fpu.io.rs3Data := ex1Rs3Data
     fpu.io.op := ex1Pkg.op
     fpu.io.rm := ex1Pkg.rm
+    fpu.io.faddAdvance := !io.hazard.ex2Stall
+    fpu.io.fmulStage1Advance := !io.hazard.ex2Stall
+    fpu.io.fmulStage2Advance := !io.hazard.ex3Stall
     
     // 类型转换模块实例化
     val fpuConvert = Module(new FPUConvert(convertType))

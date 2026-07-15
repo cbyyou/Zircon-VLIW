@@ -16,6 +16,9 @@ class FPUIO extends Bundle {
     val rs3Data = Input(UInt(32.W))    // 源操作数3（保留，本次不用）
     val op = Input(UInt(7.W))          // 操作码
     val rm = Input(UInt(3.W))          // 舍入模式
+    val faddAdvance = Input(Bool())
+    val fmulStage1Advance = Input(Bool())
+    val fmulStage2Advance = Input(Bool())
     val res = Output(UInt(32.W))       // 运算结果
     val fflags = Output(UInt(5.W))     // 浮点异常标志 {NV, DZ, OF, UF, NX}
     val faddResult = Output(UInt(32.W))
@@ -46,11 +49,14 @@ class FPU extends Module {
         io.rs2Data
     )
     fadd.io.rm := io.rm
+    fadd.io.advance := io.faddAdvance
     
     // FMUL
     fmul.io.a := io.rs1Data
     fmul.io.b := io.rs2Data
     fmul.io.rm := io.rm
+    fmul.io.stage1Advance := io.fmulStage1Advance
+    fmul.io.stage2Advance := io.fmulStage2Advance
     
     // FCMP - 比较运算
     fcmp.io.a := io.rs1Data

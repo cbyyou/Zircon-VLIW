@@ -11,7 +11,7 @@ class BackendMemIO extends Bundle {
 class BackendFrontendIO extends Bundle {
     // 从Frontend接收8个InstPkg
     val instPkgs = Input(Vec(8, new InstructionPackage))
-    
+
     // 写回到Frontend寄存器堆（8条流水线的写回请求）
     val gprWen = Output(Vec(8, Bool()))      // 8个GPR写口（流水线0现在也支持ALU）
     val gprWaddr = Output(Vec(8, UInt(5.W)))
@@ -186,8 +186,8 @@ class Backend extends Module {
     val fprPipelines = Seq(pipeline0, pipeline1, pipeline2, pipeline5, pipeline6)
     for (i <- 0 until 5) {
         val p = fprPipelines(i).asInstanceOf[{
-            def io: { 
-                def frontend: { 
+            def io: {
+                def frontend: {
                     def fprWen: Bool
                     def fprWaddr: UInt
                     def fprWdata: UInt
