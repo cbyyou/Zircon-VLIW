@@ -5,6 +5,7 @@ import ZirconUtil._
 
 // LSU内存接口
 class LSUMemIO extends Bundle {
+    val valid = Output(Bool())
     val op    = Output(UInt(7.W))
     val addr  = Output(UInt(32.W))
     val wdata = Output(UInt(32.W))
@@ -12,6 +13,7 @@ class LSUMemIO extends Bundle {
 }
 
 class LSUIO extends Bundle {
+    val valid = Input(Bool())
     val op    = Input(UInt(7.W))
     val addr  = Input(UInt(32.W))
     val wdata = Input(UInt(32.W))
@@ -26,7 +28,7 @@ class LSU extends Module {
     io.mem.op    := io.op
     io.mem.addr  := io.addr
     io.mem.wdata := io.wdata
-    
+    io.mem.valid := io.valid
     // 从仿真环境读取的数据
     val memData = io.mem.rdata
     
@@ -61,4 +63,3 @@ class LSU extends Module {
     
     io.res := res
 }
-

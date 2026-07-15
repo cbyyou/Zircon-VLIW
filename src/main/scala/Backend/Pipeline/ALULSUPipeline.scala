@@ -1,5 +1,6 @@
 import chisel3._
 import chisel3.util._
+import ZirconConfig.EXEOp._
 
 class ALULSUPipelineIO extends Bundle {
     val forward = new PipelineForwardIO
@@ -39,9 +40,48 @@ class ALULSUPipeline extends Module {
     }.elsewhen(!io.hazard.ex2Stall) {
         ex2Pkg := ex1PkgOut
     }
-    
+    val loadOps = Seq(
+        LB,
+        LH,
+        LW,
+        LBU,
+        LHU,
+        FLW
+    )
+    val storeOps = Seq(
+        SB,
+        SH,
+        SW,
+        FSW
+    )
+
+    val ex2IsLoad = loadOps
+        .map(op => ex2Pkg.op === op)
+        .reduce(_ || _)
+
+    val ex2IsStore = storeOps
+        .map(op => ex2Pkg.op === op)
+        .reduce(_ || _)
+
+    val ex2IsMem =
+        ex2Pkg.inst =/= 0.U &&
+        (ex2IsLoad || ex2IsStore)
+
     // LSU实例化（在EX2阶段发起访问）
     val lsu = Module(new LSU)
+    // EX2被保持时操作和地址保持不变，但零等待访存事务只能发出一次。
+    val memIssued = RegInit(false.B)
+
+    val memRequestValid = ex2IsMem && !memIssued
+    when(io.hazard.ex2Flush) {
+        memIssued := false.B
+    }.elsewhen(!io.hazard.ex2Stall) {
+        memIssued := false.B
+    }.elsewhen(memRequestValid) {
+        memIssued := true.B
+    }
+
+    lsu.io.valid := memRequestValid
     lsu.io.op := ex2Pkg.op
     lsu.io.addr := ex2Pkg.aluResult  // 使用EX1-EX2寄存器中的ALU结果作为地址
     lsu.io.wdata := ex2Pkg.rs2Data   // store数据使用EX1阶段前递修正后保存的rs2Data
@@ -91,4 +131,3 @@ class ALULSUPipeline extends Module {
     io.hazard.ex1Pkg := ex1Pkg
     io.hazard.ex2Pkg := ex2Pkg
 }
-
