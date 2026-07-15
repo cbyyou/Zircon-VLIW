@@ -54,7 +54,7 @@ class ALUiMDPipeline extends Module {
     multiply.io.src1 := ex1Rs1Data
     multiply.io.src2 := ex1Rs2Data
     multiply.io.op := ex1Pkg.op(4, 0)
-    multiply.io.divBusy := io.hazard.ex2Stall
+    multiply.io.stall := io.hazard.ex2Stall
     
     // EX1阶段：只保存ALU结果，乘除法器在内部流水
     val ex1PkgOut = ex1Pkg.EX1Update(alu.io.res, 0.U, false.B)
@@ -124,4 +124,3 @@ class ALUiMDPipeline extends Module {
     io.hazard.ex1Pkg := ex1Pkg
     io.hazard.ex2Pkg := ex2Pkg
 }
-

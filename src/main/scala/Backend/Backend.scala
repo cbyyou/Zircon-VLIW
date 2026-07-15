@@ -41,11 +41,11 @@ class BackendHazardIO extends Bundle {
     val ex1Pkgs = Output(Vec(8, new InstructionPackage))
     val ex2Pkgs = Output(Vec(8, new InstructionPackage))
     
-    // 流水线3、4的除法器busy信号
-    val divBusy = Output(Vec(2, Bool()))
-    
-    // 流水线0的浮点除法器busy信号
-    val fdivBusy = Output(Bool())
+    // 任意流水线需要保持时都会触发全局停顿
+    val pipelineBusy = Output(Vec(8, Bool()))
+
+    // 当前访存接口为零等待；为后续带握手的内存系统预留
+    val memBusy = Output(Bool())
     
     // 流水线7的分支预测失败信号
     val predFail = Output(Bool())
@@ -152,12 +152,20 @@ class Backend extends Module {
     io.mem.lsu0 <> pipeline5.io.mem
     io.mem.lsu1 <> pipeline6.io.mem
     
-    // ========== 连接divBusy信号 ==========
-    io.hazard.divBusy(0) := pipeline3.io.hazard.divBusy
-    io.hazard.divBusy(1) := pipeline4.io.hazard.divBusy
-    
-    // ========== 连接fdivBusy信号 ==========
-    io.hazard.fdivBusy := pipeline0.io.hazard.fdivBusy
+    // ========== 汇总各流水线的可变延迟停顿请求 ==========
+    io.hazard.pipelineBusy := VecInit(Seq(
+        pipeline0.io.hazard.fdivBusy,
+        false.B,
+        false.B,
+        pipeline3.io.hazard.divBusy,
+        pipeline4.io.hazard.divBusy,
+        false.B,
+        false.B,
+        false.B
+    ))
+
+    // 现有组合访存接口在当前周期返回，不产生停顿。
+    io.hazard.memBusy := false.B
     
     // ========== 连接分支预测失败信号 ==========
     io.hazard.predFail := pipeline7.io.hazard.predFail

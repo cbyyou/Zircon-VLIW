@@ -24,10 +24,11 @@ class Hazard extends Module {
         io.backend.wbStall(i) := false.B
     }
     
-    // ========== 1. 除法器停顿处理（最高优先级）==========
-    // 包括整数除法器（流水线3、4）和浮点除法器（流水线0）
-    val divStall = io.backend.divBusy(0) || io.backend.divBusy(1) || io.backend.fdivBusy
-    when(divStall) {
+    // ========== 1. 全局停顿处理（最高优先级）==========
+    // 任意一条流水线阻塞时，所有8条流水线保持同步。
+    val executionStall = io.backend.pipelineBusy.asUInt.orR
+    val globalStall = executionStall || io.backend.memBusy
+    when(globalStall) {
         // 对前端发起停顿
         io.frontend.stall := true.B
         // 停顿所有的ID-EX1、EX1-EX2、EX2-EX3寄存器
@@ -43,7 +44,7 @@ class Hazard extends Module {
     }
     
     // ========== 2. 分支预测失败处理（次优先级）==========
-    when(!divStall && io.backend.predFail) {
+    when(!globalStall && io.backend.predFail) {
         // 给前端flush信号
         io.frontend.flush := true.B
         // 给ID-EX1段间寄存器flush信号
@@ -102,9 +103,9 @@ class Hazard extends Module {
         }
     }
     
-    // RAW冲突处理：如果没有除法器停顿和分支冲刷，则处理RAW冲突
+    // RAW冲突处理：如果没有全局停顿和分支冲刷，则处理RAW冲突
     // 注意：分支冲刷优先于RAW stall，否则PC无法更新到正确的跳转地址
-    when(!divStall && !io.backend.predFail && rawHazard) {
+    when(!globalStall && !io.backend.predFail && rawHazard) {
         // 对前端发起停顿
         io.frontend.stall := true.B
         // 冲刷ID-EX1寄存器
@@ -113,4 +114,3 @@ class Hazard extends Module {
         }
     }
 }
-
