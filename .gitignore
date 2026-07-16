@@ -2,6 +2,7 @@
 test_run_dir/
 verilog/
 out/
+/sim/build/
 ### XilinxISE template
 # intermediate build files
 *.bgn

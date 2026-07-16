@@ -13,6 +13,11 @@ class CPUDebugIO extends Bundle {
     val wbInst = Output(Vec(8, UInt(32.W)))    // 提交的指令
     val wbRd = Output(Vec(8, UInt(6.W)))       // 写回的寄存器（6位，最高位区分GPR/FPR）
     val wbData = Output(Vec(8, UInt(32.W)))    // 写回的数据
+
+    // 处理器内部性能计数器，IPC由调试端用计数器比值计算
+    val perfCycles = Output(UInt(64.W))
+    val perfEffectiveInstructions = Output(UInt(64.W))
+    val perfExecutedPackets = Output(UInt(64.W))
     
     // 分支调试信号
     val predFail = Output(Bool())
@@ -35,6 +40,7 @@ class CPU extends Module {
     val frontend = Module(new Frontend)
     val backend = Module(new Backend)
     val hazard = Module(new Hazard)
+    val performanceMonitor = Module(new PerformanceMonitor)
     
     // ========== 连接Frontend和Backend ==========
     // Frontend -> Backend: 指令包
@@ -73,6 +79,11 @@ class CPU extends Module {
     io.debug.wbInst := backend.io.debug.wbInst
     io.debug.wbRd := backend.io.debug.wbRd
     io.debug.wbData := backend.io.debug.wbData
+    performanceMonitor.io.wbValid := backend.io.debug.wbValid
+    performanceMonitor.io.wbInst := backend.io.debug.wbInst
+    io.debug.perfCycles := performanceMonitor.io.cycles
+    io.debug.perfEffectiveInstructions := performanceMonitor.io.effectiveInstructions
+    io.debug.perfExecutedPackets := performanceMonitor.io.executedPackets
     
     // 分支调试信号
     io.debug.predFail := backend.io.frontend.predFail
