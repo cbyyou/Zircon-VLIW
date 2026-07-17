@@ -41,7 +41,10 @@ class ALUiMDPipeline extends Module {
     val isDivOp = ex1Pkg.op(4) && ex1Pkg.op(2)
     val divActive = RegInit(false.B)
     val divComplete = divActive && srt2.io.ready
-    val divRequest = ex1Pkg.rdValid && isDivOp && (!divActive || divComplete)
+    // ex2Flush squashes the younger package currently in EX1 after a redirect.
+    // Do not let a wrong-path DIV/REM request escape into the stateful divider.
+    val divRequest = ex1Pkg.rdValid && isDivOp && !io.hazard.ex2Flush &&
+        (!divActive || divComplete)
     srt2.io.valid := divRequest
     io.hazard.divStart := divRequest
 
