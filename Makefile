@@ -1,6 +1,5 @@
 PWD := $(shell pwd)
 SCALA_SRC := $(shell find src -name "*.scala")
-SIMMODELS_DIR ?= $(abspath ../Zircon-SimModels)
 all: verilog
 
 USE_SBT := 1
@@ -20,8 +19,8 @@ else
 endif
 
 
-run: sim-verilog
-	@$(MAKE) -C sim run IMG="$(IMG)" ARGS="$(ARGS)" SIMMODELS_DIR="$(SIMMODELS_DIR)"
+run:
+	@$(MAKE) -C ZirconSim run $(IMG)
 # ifeq ($(USE_SBT), 1)
 # 	@IMG=$(IMG) TEST_DIR=$(PWD)/test_run_dir BUILD_MODE=sim sbt 'testOnly EmuMain' --batch
 # else

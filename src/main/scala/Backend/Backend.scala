@@ -19,6 +19,11 @@ class BackendFrontendIO extends Bundle {
     val fprWen = Output(Vec(5, Bool()))      // 流水线0-2 FPU和流水线5-6 FLW
     val fprWaddr = Output(Vec(5, UInt(5.W)))
     val fprWdata = Output(Vec(5, UInt(32.W)))
+    val csrValid = Output(Bool())
+    val csrAddress = Output(UInt(12.W))
+    val csrCommand = Output(UInt(2.W))
+    val csrSource = Output(UInt(32.W))
+    val csrReadData = Input(UInt(32.W))
     
     // 分支预测失败信号和跳转地址
     val predFail = Output(Bool())
@@ -46,6 +51,9 @@ class BackendHazardIO extends Bundle {
 
     // 可变延迟单元在EX1接受请求，用于阻止更年轻的包进入EX1
     val pipelineStart = Output(Vec(8, Bool()))
+
+    // 尚未提交的frm/fcsr写操作，用于阻止动态舍入指令读取旧frm。
+    val frmWritePending = Output(Bool())
 
     // 当前访存接口为零等待；为后续带握手的内存系统预留
     val memBusy = Output(Bool())
@@ -186,6 +194,29 @@ class Backend extends Module {
     io.hazard.branchTgt := pipeline7.io.hazard.branchTgt
     io.frontend.predFail := pipeline7.io.hazard.predFail
     io.frontend.branchTgt := pipeline7.io.hazard.branchTgt
+
+    pipeline7.io.csr.readData := io.frontend.csrReadData
+    io.frontend.csrValid := pipeline7.io.csr.valid
+    io.frontend.csrAddress := pipeline7.io.csr.address
+    io.frontend.csrCommand := pipeline7.io.csr.command
+    io.frontend.csrSource := pipeline7.io.csr.source
+
+    def writesFrm(pkg: InstructionPackage): Bool = {
+        val isCSR = pkg.op === ZirconConfig.EXEOp.CSRRW ||
+                    pkg.op === ZirconConfig.EXEOp.CSRRS ||
+                    pkg.op === ZirconConfig.EXEOp.CSRRC
+        val targetsFrm = pkg.inst(31, 20) === ZirconConfig.FloatingCSRAddress.FRM ||
+                         pkg.inst(31, 20) === ZirconConfig.FloatingCSRAddress.FCSR
+        val writes = pkg.op === ZirconConfig.EXEOp.CSRRW || pkg.inst(19, 15) =/= 0.U
+        isCSR && pkg.inst =/= 0.U && targetsFrm && writes
+    }
+
+    io.hazard.frmWritePending := Seq(
+        pipeline7.io.forward.ex1Pkg,
+        pipeline7.io.forward.ex2Pkg,
+        pipeline7.io.forward.ex3Pkg,
+        pipeline7.io.forward.wbPkg
+    ).map(writesFrm).reduce(_ || _)
     
     // ========== 汇总写回信号到Frontend（使用循环）==========
     // GPR写口分配：流水线0-7各1个，共8个

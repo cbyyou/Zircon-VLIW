@@ -92,7 +92,8 @@ class Hazard extends Module {
         val isFloat = op(6)  // op[6]=1表示float（不包括fdiv）
         // FDiv 需要根据操作码判断，而不是流水线编号
         val isFDiv = (op === ZirconConfig.EXEOp.FDIV_S) || (op === ZirconConfig.EXEOp.FSQRT_S)
-        isLoad || isMulDiv || isFloat || isFDiv
+        val isCSR = op === CSRRW || op === CSRRS || op === CSRRC
+        isLoad || isMulDiv || isFloat || isFDiv || isCSR
     }
 
     def blocksConsumerInEx1(pkg: InstructionPackage, pipelineIdx: Int): Bool = {
@@ -145,10 +146,12 @@ class Hazard extends Module {
 
     def usesRs1(pkg: InstructionPackage): Bool = {
         val opcode = pkg.inst(6, 0)
-        Seq(
+        val regularRs1 = Seq(
             "h67".U, "h63".U, "h03".U, "h07".U, "h23".U, "h27".U,
             "h13".U, "h33".U, "h53".U, "h43".U, "h47".U, "h4b".U, "h4f".U
         ).map(opcode === _).reduce(_ || _)
+        val registerCSR = opcode === "h73".U && !pkg.inst(14)
+        regularRs1 || registerCSR
     }
 
     def usesRs2(pkg: InstructionPackage): Bool = {
@@ -213,10 +216,23 @@ class Hazard extends Module {
             }
         }
     }
+
+    def usesDynamicRounding(pkg: InstructionPackage): Bool = {
+        val roundingOp = Seq(
+            FADD_S, FSUB_S, FMUL_S, FDIV_S, FSQRT_S,
+            FCVT_W_S, FCVT_WU_S, FCVT_S_W, FCVT_S_WU,
+            FMADD_S, FMSUB_S, FNMSUB_S, FNMADD_S
+        ).map(pkg.op === _).reduce(_ || _)
+        pkg.inst =/= 0.U && roundingOp && pkg.inst(14, 12) === "b111".U
+    }
+
+    val frmHazard = io.backend.frmWritePending &&
+        io.frontend.idPkgs.map(usesDynamicRounding).reduce(_ || _)
+    val dependencyHazard = rawHazard || frmHazard
     
     // RAW冲突处理：如果没有全局停顿和分支冲刷，则处理RAW冲突
     // 注意：分支冲刷优先于RAW stall，否则PC无法更新到正确的跳转地址
-    when(!globalStall && !io.backend.predFail && !executionStarting && rawHazard) {
+    when(!globalStall && !io.backend.predFail && !executionStarting && dependencyHazard) {
         // 对前端发起停顿
         io.frontend.stall := true.B
         // 冲刷ID-EX1寄存器

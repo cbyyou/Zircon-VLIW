@@ -44,11 +44,17 @@ class Forward extends Module {
             val matches = Wire(Vec(24, Bool()))  // 8个EX2 + 8个EX3 + 8个WB
             val data = Wire(Vec(24, UInt(32.W)))
 
+            def isCSR(pkg: InstructionPackage): Bool = {
+                pkg.op === ZirconConfig.EXEOp.CSRRW ||
+                pkg.op === ZirconConfig.EXEOp.CSRRS ||
+                pkg.op === ZirconConfig.EXEOp.CSRRC
+            }
+
             // 检查EX2阶段的前递（优先级最高）
             for (j <- 0 until 8) {
                 val pkg = io.ex2Pkgs(j)
                 val isFloat = FloatBypass.isFloatProducer(pkg, j)
-                val canFwd = pkg.rdValid && Mux(
+                val canFwd = pkg.rdValid && !isCSR(pkg) && Mux(
                     isFloat,
                     FloatBypass.availableInEx2(pkg, j),
                     ex2CanForward(j)
@@ -62,7 +68,7 @@ class Forward extends Module {
             for (j <- 0 until 8) {
                 val pkg = io.ex3Pkgs(j)
                 val isFloat = FloatBypass.isFloatProducer(pkg, j)
-                val canFwd = pkg.rdValid && Mux(
+                val canFwd = pkg.rdValid && !isCSR(pkg) && Mux(
                     isFloat,
                     FloatBypass.availableInEx3(pkg, j),
                     ex3CanForward(j)

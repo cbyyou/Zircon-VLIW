@@ -19,6 +19,12 @@ class FrontendBackendIO extends Bundle {
     val fprWen = Input(Vec(5, Bool()))
     val fprWaddr = Input(Vec(5, UInt(5.W)))
     val fprWdata = Input(Vec(5, UInt(32.W)))
+    // 浮点CSR在第7条流水线提交，状态保存在前端供译码读取frm。
+    val csrValid = Input(Bool())
+    val csrAddress = Input(UInt(12.W))
+    val csrCommand = Input(UInt(2.W))
+    val csrSource = Input(UInt(32.W))
+    val csrReadData = Output(UInt(32.W))
 }
 
 // 前端与Hazard接口
@@ -43,6 +49,13 @@ class FrontendIO extends Bundle {
 
 class Frontend extends Module {
     val io = IO(new FrontendIO)
+
+    val floatingCSRFile = Module(new FloatingCSRFile)
+    floatingCSRFile.io.valid := io.backend.csrValid
+    floatingCSRFile.io.address := io.backend.csrAddress
+    floatingCSRFile.io.command := io.backend.csrCommand
+    floatingCSRFile.io.source := io.backend.csrSource
+    io.backend.csrReadData := floatingCSRFile.io.readData
 
     // ========== IF Stage ==========
     // PC寄存器（复位值0x80000000）
@@ -96,6 +109,7 @@ class Frontend extends Module {
     // 连接Decoder输入
     for (i <- 0 until 8) {
         decoders(i).io.instPkgIn := idInstPkgs(i)
+        decoders(i).io.frm := floatingCSRFile.io.frm
     }
     
     // 寄存器堆：GPR 14读8写，FPR 11读5写

@@ -44,6 +44,12 @@ object BranchDecodeMap{
         RVISA.BGE       -> List(BGE,        B_TYPE, PC,  IMM, N, N, N, Y),
         RVISA.BLTU      -> List(BLTU,       B_TYPE, PC,  IMM, N, N, N, Y),
         RVISA.BGEU      -> List(BGEU,       B_TYPE, PC,  IMM, N, N, N, Y),
+        RVISA.CSRRW     -> List(CSRRW,       I_TYPE, RS1, IMM, Y, N, N, Y),
+        RVISA.CSRRS     -> List(CSRRS,       I_TYPE, RS1, IMM, Y, N, N, Y),
+        RVISA.CSRRC     -> List(CSRRC,       I_TYPE, RS1, IMM, Y, N, N, Y),
+        RVISA.CSRRWI    -> List(CSRRW,       I_TYPE, RS1, IMM, Y, N, N, Y),
+        RVISA.CSRRSI    -> List(CSRRS,       I_TYPE, RS1, IMM, Y, N, N, Y),
+        RVISA.CSRRCI    -> List(CSRRC,       I_TYPE, RS1, IMM, Y, N, N, Y),
     )
 }
 object FPUDecodeMap{
@@ -112,6 +118,7 @@ object FDivDecodeMap {
 
 class DecoderIO extends Bundle{
     val instPkgIn    = Input(new InstructionPackage())
+    val frm          = Input(UInt(3.W))
     val instPkgOut   = Output(new InstructionPackage())
 
 }
@@ -166,10 +173,8 @@ class Decoder(ALU: Boolean, FPU: Boolean, Branch: Boolean, Mem: Boolean, IMulDiv
         B_TYPE -> SE(inst(31) ## inst(7) ## inst(30, 25) ## inst(11, 8) ## 0.U(1.W), 32),
     ))
 
-    // Temporary FCSR fallback: dynamic rounding (111) uses the reset-default
-    // RNE mode until frm is implemented and connected.
     val encodedRm = io.instPkgIn.inst(14, 12)
-    val rm = Mux(encodedRm === "b111".U, "b000".U, encodedRm)
+    val rm = Mux(encodedRm === "b111".U, io.frm, encodedRm)
 
     io.instPkgOut := io.instPkgIn.IDUpdate(rs1, rs2, rs3, rd, rdValid, op, rm, immGen(immType, io.instPkgIn.inst), src1Sel, src2Sel)
 }

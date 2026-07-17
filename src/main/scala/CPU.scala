@@ -77,6 +77,11 @@ class CPU extends Module {
     frontend.io.backend.fprWen := backend.io.frontend.fprWen
     frontend.io.backend.fprWaddr := backend.io.frontend.fprWaddr
     frontend.io.backend.fprWdata := backend.io.frontend.fprWdata
+    frontend.io.backend.csrValid := backend.io.frontend.csrValid
+    frontend.io.backend.csrAddress := backend.io.frontend.csrAddress
+    frontend.io.backend.csrCommand := backend.io.frontend.csrCommand
+    frontend.io.backend.csrSource := backend.io.frontend.csrSource
+    backend.io.frontend.csrReadData := frontend.io.backend.csrReadData
     
     // Backend -> Frontend: 分支重定向
     frontend.io.backend.predFail := backend.io.frontend.predFail
