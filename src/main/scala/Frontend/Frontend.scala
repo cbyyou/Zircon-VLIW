@@ -16,9 +16,15 @@ class FrontendBackendIO extends Bundle {
     val gprWen = Input(Vec(8, Bool()))      // 8个GPR写口
     val gprWaddr = Input(Vec(8, UInt(5.W)))
     val gprWdata = Input(Vec(8, UInt(32.W)))
-    val fprWen = Input(Vec(3, Bool()))
-    val fprWaddr = Input(Vec(3, UInt(5.W)))
-    val fprWdata = Input(Vec(3, UInt(32.W)))
+    val fprWen = Input(Vec(5, Bool()))
+    val fprWaddr = Input(Vec(5, UInt(5.W)))
+    val fprWdata = Input(Vec(5, UInt(32.W)))
+    // 浮点CSR在第7条流水线提交，状态保存在前端供译码读取frm。
+    val csrValid = Input(Bool())
+    val csrAddress = Input(UInt(12.W))
+    val csrCommand = Input(UInt(2.W))
+    val csrSource = Input(UInt(32.W))
+    val csrReadData = Output(UInt(32.W))
 }
 
 // 前端与Hazard接口
@@ -43,7 +49,14 @@ class FrontendIO extends Bundle {
 
 class Frontend extends Module {
     val io = IO(new FrontendIO)
-    
+
+    val floatingCSRFile = Module(new FloatingCSRFile)
+    floatingCSRFile.io.valid := io.backend.csrValid
+    floatingCSRFile.io.address := io.backend.csrAddress
+    floatingCSRFile.io.command := io.backend.csrCommand
+    floatingCSRFile.io.source := io.backend.csrSource
+    io.backend.csrReadData := floatingCSRFile.io.readData
+
     // ========== IF Stage ==========
     // PC寄存器（复位值0x80000000）
     val pc = RegInit(0x80000000L.U(32.W))
@@ -96,16 +109,17 @@ class Frontend extends Module {
     // 连接Decoder输入
     for (i <- 0 until 8) {
         decoders(i).io.instPkgIn := idInstPkgs(i)
+        decoders(i).io.frm := floatingCSRFile.io.frm
     }
     
-    // 寄存器堆：GPR 14读8写，FPR 9读3写
+    // 寄存器堆：GPR 14读8写，FPR 11读5写
     val grf = Module(new Regfile(nr = 14, nw = 8))
-    val frf = Module(new Regfile(nr = 9, nw = 3))
+    val frf = Module(new Regfile(nr = 11, nw = 5))
     
     // ========== 寄存器堆读端口连接 ==========
     // 根据文档表格，连接读端口
     // GPR读端口分配: 流水线0需要0个，流水线1-7各需要2个
-    // FPR读端口分配: 流水线0-2各需要3个，流水线3-7需要0个
+    // FPR读端口分配: 流水线0-2各3个，流水线5-6各1个用于FSW
     
     // 流水线0: 0个GPR，3个FPR (rs1, rs2, rs3)
     frf.io.raddr(0) := idInstPkgs(0).inst(19, 15)
@@ -124,7 +138,11 @@ class Frontend extends Module {
         frf.io.raddr(3 + (i-1)*3 + 1) := idInstPkgs(i).inst(24, 20)
         frf.io.raddr(3 + (i-1)*3 + 2) := idInstPkgs(i).inst(31, 27)
     }
-    
+
+    // 流水线5-6: FSW的rs2来自FPR
+    frf.io.raddr(9) := idInstPkgs(5).inst(24, 20)
+    frf.io.raddr(10) := idInstPkgs(6).inst(24, 20)
+
     // ========== 寄存器堆写端口连接（来自后端）==========
     for (i <- 0 until 8) {
         grf.io.wen(i) := io.backend.gprWen(i)
@@ -132,7 +150,7 @@ class Frontend extends Module {
         grf.io.wdata(i) := io.backend.gprWdata(i)
     }
     
-    for (i <- 0 until 3) {
+    for (i <- 0 until 5) {
         frf.io.wen(i) := io.backend.fprWen(i)
         frf.io.waddr(i) := io.backend.fprWaddr(i)
         frf.io.wdata(i) := io.backend.fprWdata(i)
@@ -158,12 +176,17 @@ class Frontend extends Module {
         decodedInstPkgs(i) := decoders(i).io.instPkgOut.IDUpdate(rs1Data, rs2Data, rs3Data)
     }
     
-    // 流水线3-7: 只有GPR
+    // 流水线3-7: 地址和整数操作数来自GPR；FSW的rs2来自FPR
     for (i <- 3 until 8) {
         val gprBase = (i-1) * 2
+        val rs2Data = if (i == 5 || i == 6) {
+            Mux(decoders(i).io.instPkgOut.rs2(5), frf.io.rdata(9 + i - 5), grf.io.rdata(gprBase + 1))
+        } else {
+            grf.io.rdata(gprBase + 1)
+        }
         decodedInstPkgs(i) := decoders(i).io.instPkgOut.IDUpdate(
             grf.io.rdata(gprBase),
-            grf.io.rdata(gprBase + 1),
+            rs2Data,
             0.U
         )
     }

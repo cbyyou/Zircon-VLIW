@@ -211,20 +211,19 @@ class FDIV(val expWidth: Int, val precision: Int) extends Module {
     state := UIntToOH(s_pre_1, state_num)
   } .elsewhen(state(s_pre_1)) {
     state := Mux(skipIter, UIntToOH(s_post_0, state_num), UIntToOH(s_iter, state_num))
-    outValidReg := skipIter
   } .elsewhen(finalIter && state(s_iter)) {
     state := UIntToOH(s_post_0, state_num)
-    outValidReg := true.B
-  } .elsewhen(state(s_post_0) && out_ready) {
+  } .elsewhen(state(s_post_0)) {
     state := UIntToOH(s_finish, state_num)
-    outValidReg := false.B
-  } .elsewhen(state(s_finish)) {
+    outValidReg := true.B
+  } .elsewhen(state(s_finish) && out_ready) {
     state := UIntToOH(s_idle, state_num)
+    outValidReg := false.B
   } .otherwise {
     state := state
   }
 
-  assert(outValidReg === state(s_post_0))
+  assert(outValidReg === state(s_finish))
 
   val aSigNorm = Wire(UInt(precision.W))
   val aSigReg = RegEnable(Mux(state(s_idle), raw_a.sig, aSigNorm), state(s_idle) || state(s_pre_0)) // 1.xxx

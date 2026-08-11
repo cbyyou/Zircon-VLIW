@@ -727,6 +727,7 @@ class FCMA_ADD(val expWidth: Int, val precision: Int, val outPc: Int) extends Mo
     val b_inter_valid = Input(Bool())
     val b_inter_flags = Input(new FMULToFADD_fflags)
     val rm = Input(UInt(3.W))
+    val advance = Input(Bool())
     val result = Output(UInt((expWidth + outPc).W))
     val fflags = Output(UInt(5.W))
   })
@@ -741,7 +742,7 @@ class FCMA_ADD(val expWidth: Int, val precision: Int, val outPc: Int) extends Mo
   fadd_s1.io.rm := io.rm
 
   //fadd_s2.io.in := fadd_s1.io.out
-  fadd_s2.io.in := ShiftRegister(fadd_s1.io.out, 1, 0.U.asTypeOf(new FCMA_ADD_s1_to_s2(expWidth, precision, outPc)), true.B)
+  fadd_s2.io.in := ShiftRegister(fadd_s1.io.out, 1, 0.U.asTypeOf(new FCMA_ADD_s1_to_s2(expWidth, precision, outPc)), io.advance)
 
   io.result := fadd_s2.io.result
   io.fflags := fadd_s2.io.fflags
@@ -752,6 +753,7 @@ class FADD(val expWidth: Int, val precision: Int) extends Module {
   val io = IO(new Bundle() {
     val a, b = Input(UInt((expWidth + precision).W))
     val rm = Input(UInt(3.W))
+    val advance = Input(Bool())
     val result = Output(UInt((expWidth + precision).W))
     val fflags = Output(UInt(5.W))
   })
@@ -761,6 +763,7 @@ class FADD(val expWidth: Int, val precision: Int) extends Module {
   module.io.a := io.a
   module.io.b := io.b
   module.io.rm := io.rm
+  module.io.advance := io.advance
   module.io.b_inter_valid := false.B
   module.io.b_inter_flags := DontCare
   io.result := module.io.result

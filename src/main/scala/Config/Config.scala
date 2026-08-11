@@ -14,6 +14,9 @@ object EXEOp {
     val AND     = 0x07.U(7.W)
     val SUB     = 0x08.U(7.W)
     val LUI     = 0x09.U(7.W)
+    val CSRRW   = 0x0a.U(7.W)
+    val CSRRS   = 0x0b.U(7.W)
+    val CSRRC   = 0x0c.U(7.W)
     val SRA     = 0x0d.U(7.W)
     
     // branch
@@ -83,6 +86,18 @@ object EXEOp {
     val FNMSUB_S  = 0x52.U(7.W) // opcode=1001011 -> inst[3:2]=10
     val FNMADD_S  = 0x53.U(7.W) // opcode=1001111 -> inst[3:2]=11
 
+}
+
+object CSRCommand {
+    val WRITE = 0.U(2.W)
+    val SET   = 1.U(2.W)
+    val CLEAR = 2.U(2.W)
+}
+
+object FloatingCSRAddress {
+    val FFLAGS = 0x001.U(12.W)
+    val FRM    = 0x002.U(12.W)
+    val FCSR   = 0x003.U(12.W)
 }
 
 object InstructionType {

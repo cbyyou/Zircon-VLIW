@@ -50,11 +50,20 @@ class ALUBranchPipelineHazardIO extends PipelineHazardIO {
     val branchTgt  = Output(UInt(32.W))
 }
 
+class ALUBranchPipelineCSRIO extends Bundle {
+    val valid = Output(Bool())
+    val address = Output(UInt(12.W))
+    val command = Output(UInt(2.W))
+    val source = Output(UInt(32.W))
+    val readData = Input(UInt(32.W))
+}
+
 class ALUBranchPipelineIO extends Bundle {
     val forward = new PipelineForwardIO
     val backend = new PipelineBackendIO
     val frontend = new PipelineFrontendIO
     val hazard = new ALUBranchPipelineHazardIO
+    val csr = new ALUBranchPipelineCSRIO
 }
 
 class ALUBranchPipeline extends Module {
@@ -86,7 +95,9 @@ class ALUBranchPipeline extends Module {
     branch.io.imm := ex1Pkg.imm
     
     // EX1阶段更新InstPkg
-    val ex1PkgOut = ex1Pkg.EX1Update(alu.io.res, branch.io.branchTgt, branch.io.predFail)
+    val ex1PkgOut = WireDefault(ex1Pkg.EX1Update(alu.io.res, branch.io.branchTgt, branch.io.predFail))
+    // CSR寄存器形式必须保留前递后的源操作数直到WB提交。
+    ex1PkgOut.rs1Data := ex1Rs1Data
     
     // ========== EX2阶段 ==========
     // EX1-EX2段间寄存器
@@ -119,8 +130,22 @@ class ALUBranchPipeline extends Module {
         wbPkg := ex3Pkg
     }
     
-    // WB阶段：选择写回数据（ALU结果）
-    val wbData = wbPkg.aluResult
+    val wbIsCSR = wbPkg.op === ZirconConfig.EXEOp.CSRRW ||
+                  wbPkg.op === ZirconConfig.EXEOp.CSRRS ||
+                  wbPkg.op === ZirconConfig.EXEOp.CSRRC
+    val csrSource = Mux(wbPkg.inst(14), Cat(0.U(27.W), wbPkg.inst(19, 15)), wbPkg.rs1Data)
+
+    io.csr.valid := wbIsCSR && wbPkg.inst =/= 0.U && !io.hazard.wbFlush
+    io.csr.address := wbPkg.inst(31, 20)
+    io.csr.command := MuxLookup(wbPkg.op, ZirconConfig.CSRCommand.WRITE)(Seq(
+        ZirconConfig.EXEOp.CSRRW -> ZirconConfig.CSRCommand.WRITE,
+        ZirconConfig.EXEOp.CSRRS -> ZirconConfig.CSRCommand.SET,
+        ZirconConfig.EXEOp.CSRRC -> ZirconConfig.CSRCommand.CLEAR
+    ))
+    io.csr.source := csrSource
+
+    // CSR指令向rd返回修改前的值。
+    val wbData = Mux(wbIsCSR, io.csr.readData, wbPkg.aluResult)
     val wbPkgOut = wbPkg.WBUpdate(wbData)
     
     // 写回到寄存器堆
@@ -139,4 +164,3 @@ class ALUBranchPipeline extends Module {
     io.hazard.ex1Pkg := ex1Pkg
     io.hazard.ex2Pkg := ex2Pkg
 }
-

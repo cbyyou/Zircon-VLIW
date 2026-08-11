@@ -13,6 +13,35 @@ class CPUDebugIO extends Bundle {
     val wbInst = Output(Vec(8, UInt(32.W)))    // 提交的指令
     val wbRd = Output(Vec(8, UInt(6.W)))       // 写回的寄存器（6位，最高位区分GPR/FPR）
     val wbData = Output(Vec(8, UInt(32.W)))    // 写回的数据
+
+    // 处理器内部性能计数器，IPC由调试端用计数器比值计算
+    val perfCycles = Output(UInt(64.W))
+    val perfEffectiveInstructions = Output(UInt(64.W))
+    val perfExecutedPackets = Output(UInt(64.W))
+    val perfRawStallCycles = Output(UInt(64.W))
+    val perfRawLoadCycles = Output(UInt(64.W))
+    val perfRawIntegerMulCycles = Output(UInt(64.W))
+    val perfRawFloatAddCycles = Output(UInt(64.W))
+    val perfRawFloatMulCycles = Output(UInt(64.W))
+    val perfRawFloatDivCycles = Output(UInt(64.W))
+    val perfFalseRawStallCycles = Output(UInt(64.W))
+    val perfRawOtherCycles = Output(UInt(64.W))
+    val perfBranchRedirects = Output(UInt(64.W))
+    val perfExecutionStallCycles = Output(UInt(64.W))
+    val perfFloatDivStallCycles = Output(UInt(64.W))
+    val perfIntegerDivStallCycles = Output(UInt(64.W))
+    val perfIntegerDivStartEvents = Output(UInt(64.W))
+    val perfIntegerDivStartOnRedirectEvents = Output(UInt(64.W))
+    val perfConditionalBranches = Output(UInt(64.W))
+    val perfJumps = Output(UInt(64.W))
+    val perfIntegerMultiplyInstructions = Output(UInt(64.W))
+    val perfIntegerDivideInstructions = Output(UInt(64.W))
+    val perfFloatAddInstructions = Output(UInt(64.W))
+    val perfFloatMultiplyInstructions = Output(UInt(64.W))
+    val perfFloatDivideInstructions = Output(UInt(64.W))
+    val perfFloatMacInstructions = Output(UInt(64.W))
+    val perfLoadInstructions = Output(UInt(64.W))
+    val perfStoreInstructions = Output(UInt(64.W))
     
     // 分支调试信号
     val predFail = Output(Bool())
@@ -35,6 +64,7 @@ class CPU extends Module {
     val frontend = Module(new Frontend)
     val backend = Module(new Backend)
     val hazard = Module(new Hazard)
+    val performanceMonitor = Module(new PerformanceMonitor)
     
     // ========== 连接Frontend和Backend ==========
     // Frontend -> Backend: 指令包
@@ -47,6 +77,11 @@ class CPU extends Module {
     frontend.io.backend.fprWen := backend.io.frontend.fprWen
     frontend.io.backend.fprWaddr := backend.io.frontend.fprWaddr
     frontend.io.backend.fprWdata := backend.io.frontend.fprWdata
+    frontend.io.backend.csrValid := backend.io.frontend.csrValid
+    frontend.io.backend.csrAddress := backend.io.frontend.csrAddress
+    frontend.io.backend.csrCommand := backend.io.frontend.csrCommand
+    frontend.io.backend.csrSource := backend.io.frontend.csrSource
+    backend.io.frontend.csrReadData := frontend.io.backend.csrReadData
     
     // Backend -> Frontend: 分支重定向
     frontend.io.backend.predFail := backend.io.frontend.predFail
@@ -73,6 +108,48 @@ class CPU extends Module {
     io.debug.wbInst := backend.io.debug.wbInst
     io.debug.wbRd := backend.io.debug.wbRd
     io.debug.wbData := backend.io.debug.wbData
+    performanceMonitor.io.wbValid := backend.io.debug.wbValid
+    performanceMonitor.io.wbInst := backend.io.debug.wbInst
+    performanceMonitor.io.rawStall := hazard.io.debug.rawStall
+    performanceMonitor.io.rawLoad := hazard.io.debug.rawLoad
+    performanceMonitor.io.rawIntegerMul := hazard.io.debug.rawIntegerMul
+    performanceMonitor.io.rawFloatAdd := hazard.io.debug.rawFloatAdd
+    performanceMonitor.io.rawFloatMul := hazard.io.debug.rawFloatMul
+    performanceMonitor.io.rawFloatDiv := hazard.io.debug.rawFloatDiv
+    performanceMonitor.io.falseRawStall := hazard.io.debug.falseRawStall
+    performanceMonitor.io.branchRedirect := hazard.io.debug.branchRedirect
+    performanceMonitor.io.executionStall := hazard.io.debug.executionStall
+    performanceMonitor.io.floatDivStall := hazard.io.debug.floatDivStall
+    performanceMonitor.io.integerDivStall := hazard.io.debug.integerDivStall
+    performanceMonitor.io.integerDivStarts := hazard.io.debug.integerDivStarts
+    performanceMonitor.io.integerDivStartsOnRedirect := hazard.io.debug.integerDivStartsOnRedirect
+    io.debug.perfCycles := performanceMonitor.io.cycles
+    io.debug.perfEffectiveInstructions := performanceMonitor.io.effectiveInstructions
+    io.debug.perfExecutedPackets := performanceMonitor.io.executedPackets
+    io.debug.perfRawStallCycles := performanceMonitor.io.rawStallCycles
+    io.debug.perfRawLoadCycles := performanceMonitor.io.rawLoadCycles
+    io.debug.perfRawIntegerMulCycles := performanceMonitor.io.rawIntegerMulCycles
+    io.debug.perfRawFloatAddCycles := performanceMonitor.io.rawFloatAddCycles
+    io.debug.perfRawFloatMulCycles := performanceMonitor.io.rawFloatMulCycles
+    io.debug.perfRawFloatDivCycles := performanceMonitor.io.rawFloatDivCycles
+    io.debug.perfFalseRawStallCycles := performanceMonitor.io.falseRawStallCycles
+    io.debug.perfRawOtherCycles := performanceMonitor.io.rawOtherCycles
+    io.debug.perfBranchRedirects := performanceMonitor.io.branchRedirects
+    io.debug.perfExecutionStallCycles := performanceMonitor.io.executionStallCycles
+    io.debug.perfFloatDivStallCycles := performanceMonitor.io.floatDivStallCycles
+    io.debug.perfIntegerDivStallCycles := performanceMonitor.io.integerDivStallCycles
+    io.debug.perfIntegerDivStartEvents := performanceMonitor.io.integerDivStartEvents
+    io.debug.perfIntegerDivStartOnRedirectEvents := performanceMonitor.io.integerDivStartOnRedirectEvents
+    io.debug.perfConditionalBranches := performanceMonitor.io.conditionalBranches
+    io.debug.perfJumps := performanceMonitor.io.jumps
+    io.debug.perfIntegerMultiplyInstructions := performanceMonitor.io.integerMultiplyInstructions
+    io.debug.perfIntegerDivideInstructions := performanceMonitor.io.integerDivideInstructions
+    io.debug.perfFloatAddInstructions := performanceMonitor.io.floatAddInstructions
+    io.debug.perfFloatMultiplyInstructions := performanceMonitor.io.floatMultiplyInstructions
+    io.debug.perfFloatDivideInstructions := performanceMonitor.io.floatDivideInstructions
+    io.debug.perfFloatMacInstructions := performanceMonitor.io.floatMacInstructions
+    io.debug.perfLoadInstructions := performanceMonitor.io.loadInstructions
+    io.debug.perfStoreInstructions := performanceMonitor.io.storeInstructions
     
     // 分支调试信号
     io.debug.predFail := backend.io.frontend.predFail
