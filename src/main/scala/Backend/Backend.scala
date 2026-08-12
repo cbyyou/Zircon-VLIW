@@ -16,9 +16,9 @@ class BackendFrontendIO extends Bundle {
     val gprWen = Output(Vec(8, Bool()))      // 8个GPR写口（流水线0现在也支持ALU）
     val gprWaddr = Output(Vec(8, UInt(5.W)))
     val gprWdata = Output(Vec(8, UInt(32.W)))
-    val fprWen = Output(Vec(3, Bool()))      // 3个FPR写口
-    val fprWaddr = Output(Vec(3, UInt(5.W)))
-    val fprWdata = Output(Vec(3, UInt(32.W)))
+    val fprWen = Output(Vec(5, Bool()))      // 流水线0-2 FPU和流水线5-6 FLW
+    val fprWaddr = Output(Vec(5, UInt(5.W)))
+    val fprWdata = Output(Vec(5, UInt(32.W)))
     
     // 分支预测失败信号和跳转地址
     val predFail = Output(Bool())
@@ -42,9 +42,10 @@ class BackendHazardIO extends Bundle {
     val wbFlush = Input(Vec(8, Bool()))
     val wbStall = Input(Vec(8, Bool()))
     
-    // 输出各Pipeline的EX1和EX2阶段InstPkg给Hazard做RAW判断
+    // 输出各Pipeline的EX1、EX2和EX3阶段InstPkg给Hazard做RAW判断
     val ex1Pkgs = Output(Vec(8, new InstructionPackage))
     val ex2Pkgs = Output(Vec(8, new InstructionPackage))
+    val ex3Pkgs = Output(Vec(8, new InstructionPackage))
     
     // 流水线3、4的除法器busy信号
     val divBusy = Output(Vec(2, Bool()))
@@ -79,13 +80,6 @@ class Backend extends Module {
     
     // ========== ID-EX1段间寄存器（集中管理）==========
     val idEx1Pkgs = RegInit(VecInit(Seq.fill(8)(0.U.asTypeOf(new InstructionPackage))))
-    for (i <- 0 until 8) {
-        when(io.hazard.ex1Flush(i)) {
-            idEx1Pkgs(i) := 0.U.asTypeOf(new InstructionPackage)
-        }.elsewhen(!io.hazard.ex1Stall(i)) {
-            idEx1Pkgs(i) := io.frontend.instPkgs(i)
-        }
-    }
     
     // ========== 实例化8条Pipeline ==========
     val pipeline0 = Module(new FDivFPUPipeline)          // FDiv + FPU
@@ -102,16 +96,60 @@ class Backend extends Module {
     
     // ========== 连接Forward输入（使用辅助函数折叠）==========
     def connectPipeToForward(idx: Int, pipe: Module): Unit = {
-        forward.io.ex1Pkgs(idx) := pipe.asInstanceOf[{ def io: { def forward: { def ex1Pkg: InstructionPackage }}}].io.forward.ex1Pkg
-        forward.io.ex2Pkgs(idx) := pipe.asInstanceOf[{ def io: { def forward: { def ex2Pkg: InstructionPackage }}}].io.forward.ex2Pkg
-        forward.io.ex3Pkgs(idx) := pipe.asInstanceOf[{ def io: { def forward: { def ex3Pkg: InstructionPackage }}}].io.forward.ex3Pkg
-        forward.io.wbPkgs(idx) := pipe.asInstanceOf[{ def io: { def forward: { def wbPkg: InstructionPackage }}}].io.forward.wbPkg
+        val p = pipe.asInstanceOf[{
+            def io: {
+                def forward: {
+                    def ex1Pkg: InstructionPackage
+                    def ex2Pkg: InstructionPackage
+                    def ex3Pkg: InstructionPackage
+                    def ex3GprData: UInt
+                    def wbPkg: InstructionPackage
+                }
+                def frontend: {
+                    def gprWen: Bool
+                    def gprWaddr: UInt
+                    def gprWdata: UInt
+                    def fprWen: Bool
+                    def fprWaddr: UInt
+                    def fprWdata: UInt
+                }
+            }
+        }]
+        forward.io.ex1Pkgs(idx) := p.io.forward.ex1Pkg
+        forward.io.ex2Pkgs(idx) := p.io.forward.ex2Pkg
+        forward.io.ex3Pkgs(idx) := p.io.forward.ex3Pkg
+        forward.io.ex3GprData(idx) := p.io.forward.ex3GprData
+        forward.io.wbPkgs(idx) := p.io.forward.wbPkg
+        io.hazard.ex3Pkgs(idx) := p.io.forward.ex3Pkg
+        forward.io.wbGprValid(idx) := p.io.frontend.gprWen
+        forward.io.wbGprAddr(idx) := p.io.frontend.gprWaddr
+        forward.io.wbGprData(idx) := p.io.frontend.gprWdata
+        forward.io.wbFprValid(idx) := p.io.frontend.fprWen
+        forward.io.wbFprAddr(idx) := p.io.frontend.fprWaddr
+        forward.io.wbFprData(idx) := p.io.frontend.fprWdata
     }
     
     def connectForwardToPipe(idx: Int, pipe: Module): Unit = {
-        pipe.asInstanceOf[{ def io: { def forward: { def fwdRs1Data: UInt; def fwdRs2Data: UInt; def fwdRs3Data: UInt }}}].io.forward.fwdRs1Data := forward.io.fwdRs1Data(idx)
-        pipe.asInstanceOf[{ def io: { def forward: { def fwdRs1Data: UInt; def fwdRs2Data: UInt; def fwdRs3Data: UInt }}}].io.forward.fwdRs2Data := forward.io.fwdRs2Data(idx)
-        pipe.asInstanceOf[{ def io: { def forward: { def fwdRs1Data: UInt; def fwdRs2Data: UInt; def fwdRs3Data: UInt }}}].io.forward.fwdRs3Data := forward.io.fwdRs3Data(idx)
+        val p = pipe.asInstanceOf[{
+            def io: {
+                def forward: {
+                    def fwdRs1Data: UInt
+                    def fwdRs2Data: UInt
+                    def fwdRs3Data: UInt
+                    def fwdGprRs1Data: UInt
+                    def fwdGprRs2Data: UInt
+                    def fwdFprRs1Data: UInt
+                    def fwdFprRs2Data: UInt
+                }
+            }
+        }]
+        p.io.forward.fwdRs1Data := forward.io.fwdRs1Data(idx)
+        p.io.forward.fwdRs2Data := forward.io.fwdRs2Data(idx)
+        p.io.forward.fwdRs3Data := forward.io.fwdRs3Data(idx)
+        p.io.forward.fwdGprRs1Data := forward.io.fwdGprRs1Data(idx)
+        p.io.forward.fwdGprRs2Data := forward.io.fwdGprRs2Data(idx)
+        p.io.forward.fwdFprRs1Data := forward.io.fwdFprRs1Data(idx)
+        p.io.forward.fwdFprRs2Data := forward.io.fwdFprRs2Data(idx)
     }
     
     def connectBackendToPipe(idx: Int, pipe: Module): Unit = {
@@ -151,6 +189,25 @@ class Backend extends Module {
         connectForwardToPipe(i, pipelines(i))
         connectBackendToPipe(i, pipelines(i))
         connectHazardToPipe(i, pipelines(i))
+    }
+    pipeline7.io.branchRs1Data := forward.io.fwdBranchRs1Data
+    pipeline7.io.branchRs2Data := forward.io.fwdBranchRs2Data
+
+    // A WB bypass may disappear while a long-latency unit holds EX1. Preserve
+    // the resolved operands in the held package so execution cannot fall back
+    // to register values captured before the producer wrote back.
+    for (i <- 0 until 8) {
+        when(io.hazard.ex1Flush(i)) {
+            idEx1Pkgs(i) := 0.U.asTypeOf(new InstructionPackage)
+        }.elsewhen(io.hazard.ex1Stall(i)) {
+            val heldPkg = WireDefault(idEx1Pkgs(i))
+            heldPkg.rs1Data := forward.io.fwdRs1Data(i)
+            heldPkg.rs2Data := forward.io.fwdRs2Data(i)
+            heldPkg.rs3Data := forward.io.fwdRs3Data(i)
+            idEx1Pkgs(i) := heldPkg
+        }.otherwise {
+            idEx1Pkgs(i) := io.frontend.instPkgs(i)
+        }
     }
     
     // ========== 连接LSU的内存接口 ==========
@@ -192,9 +249,10 @@ class Backend extends Module {
         io.frontend.gprWdata(i) := p.io.frontend.gprWdata
     }
     
-    // FPR写口分配：流水线0-2各1个，共3个
-    for (i <- 0 until 3) {
-        val p = pipelines(i).asInstanceOf[{ 
+    // FPR写口分配：流水线0-2执行FPU，流水线5-6执行FLW
+    val fprPipelines = Seq(pipeline0, pipeline1, pipeline2, pipeline5, pipeline6)
+    for (i <- 0 until 5) {
+        val p = fprPipelines(i).asInstanceOf[{
             def io: { 
                 def frontend: { 
                     def fprWen: Bool

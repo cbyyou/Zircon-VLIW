@@ -35,16 +35,34 @@ class FDivFPUPipeline extends Module {
     
     // FDiv实例化
     val fdiv = Module(new FDivWrapper)
-    fdiv.io.rs1Data := ex1Rs1Data
-    fdiv.io.rs2Data := ex1Rs2Data
     fdiv.io.op := ex1Pkg.op
     fdiv.io.rm := ex1Pkg.rm
     // 判断是否是 FDiv 指令
     val isFDivOp = ex1Pkg.op === ZirconConfig.EXEOp.FDIV_S || 
                    ex1Pkg.op === ZirconConfig.EXEOp.FSQRT_S
-    fdiv.io.valid := ex1Pkg.rdValid && isFDivOp
-    // 分支预测失败或流水线冲刷时终止 FDiv 运算
-    fdiv.io.kill := io.hazard.ex1Flush || io.hazard.ex2Flush || io.hazard.ex3Flush
+    val fdivRequest = ex1Pkg.rdValid && isFDivOp
+    val queuedFdivOperands = RegInit(false.B)
+    val queuedFdivRs1 = Reg(UInt(32.W))
+    val queuedFdivRs2 = Reg(UInt(32.W))
+
+    when(fdiv.io.busy && fdivRequest && !queuedFdivOperands) {
+        // WB forwarding can disappear while the preceding divide stalls the
+        // machine, so preserve the next operation's resolved operands.
+        queuedFdivOperands := true.B
+        queuedFdivRs1 := ex1Rs1Data
+        queuedFdivRs2 := ex1Rs2Data
+    }.elsewhen(fdivRequest && fdiv.io.ready) {
+        queuedFdivOperands := false.B
+    }.elsewhen(!fdivRequest) {
+        queuedFdivOperands := false.B
+    }
+
+    fdiv.io.rs1Data := Mux(queuedFdivOperands, queuedFdivRs1, ex1Rs1Data)
+    fdiv.io.rs2Data := Mux(queuedFdivOperands, queuedFdivRs2, ex1Rs2Data)
+    fdiv.io.valid := fdivRequest
+    // ex1Flush 仅阻止更年轻的 ID 指令进入 EX1，不应取消当前 EX1 的 FDiv。
+    fdiv.io.kill := io.hazard.ex2Flush || io.hazard.ex3Flush
+
     
     // FPU实例化
     val fpu = Module(new FPU)
@@ -53,16 +71,32 @@ class FDivFPUPipeline extends Module {
     fpu.io.rs3Data := ex1Rs3Data
     fpu.io.op := ex1Pkg.op
     fpu.io.rm := ex1Pkg.rm
+    fpu.io.inValid := ex1Pkg.rdValid
+    fpu.io.ex2Advance := !io.hazard.ex2Stall
+    fpu.io.ex2Flush := io.hazard.ex2Flush
+    fpu.io.ex3Advance := !io.hazard.ex3Stall
+    fpu.io.ex3Flush := io.hazard.ex3Flush
+    fpu.io.wbAdvance := !io.hazard.wbStall
+    fpu.io.wbFlush := io.hazard.wbFlush
     
-    // EX1阶段更新InstPkg
+    // 组合浮点操作在EX1末保存；FADD和FMUL按内部延迟在后续阶段保存。
     val ex1PkgOut = ex1Pkg.EX1Update(alu.io.res, 0.U, false.B)
+    val ex1IsAdd = ex1Pkg.op === ZirconConfig.EXEOp.FADD_S ||
+                   ex1Pkg.op === ZirconConfig.EXEOp.FSUB_S
+    val ex1IsMul = ex1Pkg.op === ZirconConfig.EXEOp.FMUL_S
+    val ex1IsImmediateFpu = ex1Pkg.op(6) && !ex1IsAdd && !ex1IsMul
+    val ex1PkgOutWithFpu = Mux(
+        ex1IsImmediateFpu,
+        ex1PkgOut.EX3Update(fpu.io.res, fpu.io.fflags),
+        ex1PkgOut
+    )
     
     // ========== EX2阶段 ==========
     val ex2Pkg = RegInit(0.U.asTypeOf(new InstructionPackage))
     when(io.hazard.ex2Flush) {
         ex2Pkg := 0.U.asTypeOf(new InstructionPackage)
     }.elsewhen(!io.hazard.ex2Stall) {
-        ex2Pkg := ex1PkgOut
+        ex2Pkg := ex1PkgOutWithFpu
     }
     
     // ========== EX3阶段 ==========
@@ -70,12 +104,14 @@ class FDivFPUPipeline extends Module {
     when(io.hazard.ex3Flush) {
         ex3Pkg := 0.U.asTypeOf(new InstructionPackage)
     }.elsewhen(!io.hazard.ex3Stall) {
-        // EX3阶段更新fpuResult（根据是否是FDiv选择结果）
+        // FDiv/FSqrt在变长运算完成后在此写入指令包。
         val isFDiv = ex2Pkg.op === ZirconConfig.EXEOp.FDIV_S || 
                      ex2Pkg.op === ZirconConfig.EXEOp.FSQRT_S
-        val fpuRes = Mux(isFDiv, fdiv.io.res, fpu.io.res)
-        val fpuFlags = Mux(isFDiv, fdiv.io.fflags, fpu.io.fflags)
-        ex3Pkg := ex2Pkg.EX3Update(fpuRes, fpuFlags)
+        ex3Pkg := Mux(
+            isFDiv,
+            ex2Pkg.EX3Update(fdiv.io.res, fdiv.io.fflags),
+            ex2Pkg
+        )
     }
     
     // ========== WB阶段 ==========
@@ -87,28 +123,43 @@ class FDivFPUPipeline extends Module {
     }
     
     // WB阶段：根据rd类型选择写回数据
-    // rd[5]=0: GPR (使用ALU结果)，rd[5]=1: FPR (使用FPU结果)
-    val isGPR = !wbPkg.rd(5)
-    val wbData = Mux(isGPR, wbPkg.aluResult, wbPkg.fpuResult)
-    val wbPkgOut = wbPkg.WBUpdate(wbData)
+    // 浮点比较/转换也可能写GPR，写回数据必须按操作类型选择。
+    val wbIsAdd = wbPkg.op === ZirconConfig.EXEOp.FADD_S ||
+                  wbPkg.op === ZirconConfig.EXEOp.FSUB_S
+    val wbIsMul = wbPkg.op === ZirconConfig.EXEOp.FMUL_S
+    val wbPkgWithArithmetic = MuxCase(wbPkg, Seq(
+        wbIsAdd -> wbPkg.EX3Update(fpu.io.faddResult, fpu.io.faddFflags),
+        wbIsMul -> wbPkg.EX3Update(fpu.io.fmulResult, fpu.io.fmulFflags)
+    ))
+    val isGPR = !wbPkgWithArithmetic.rd(5)
+    val isFpuResult = wbPkgWithArithmetic.op(6) ||
+                      wbPkgWithArithmetic.op === ZirconConfig.EXEOp.FDIV_S ||
+                      wbPkgWithArithmetic.op === ZirconConfig.EXEOp.FSQRT_S
+    val wbData = Mux(isFpuResult, wbPkgWithArithmetic.fpuResult, wbPkgWithArithmetic.aluResult)
+    val wbPkgOut = wbPkgWithArithmetic.WBUpdate(wbData)
+    val gprWbData = Mux(isFpuResult, wbPkg.fpuResult, wbPkg.aluResult)
     
     // 写回到寄存器堆
     io.frontend.gprWen := wbPkgOut.rdValid && isGPR
     io.frontend.gprWaddr := wbPkgOut.rd(4, 0)
-    io.frontend.gprWdata := wbPkgOut.rfWdata
+    io.frontend.gprWdata := gprWbData
     io.frontend.fprWen := wbPkgOut.rdValid && !isGPR
     io.frontend.fprWaddr := wbPkgOut.rd(4, 0)
     io.frontend.fprWdata := wbPkgOut.rfWdata
-    
+
     // 输出到Forward和Hazard
-    // 注意：FDivFPUPipeline在EX2和EX3阶段不能前递（根据文档表格）
+    // Simple FPU operations can forward from EX2. Completed FDIV/FSQRT
+    // operations expose their aligned result at EX3; FADD/FSUB use WB.
     io.forward.ex1Pkg := ex1Pkg
     io.forward.ex2Pkg := ex2Pkg
     io.forward.ex3Pkg := ex3Pkg
+    io.forward.ex3GprData := ex3Pkg.aluResult
     io.forward.wbPkg := wbPkgOut
     io.hazard.ex1Pkg := ex1Pkg
     io.hazard.ex2Pkg := ex2Pkg
     
     // FDiv busy 信号
+    // The request cycle advances the package into EX2. Busy then holds it
+    // there until the variable-latency result can advance into EX3.
     io.hazard.fdivBusy := fdiv.io.busy
 }

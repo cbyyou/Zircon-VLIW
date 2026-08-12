@@ -37,19 +37,31 @@ class ALUiMDPipeline extends Module {
     srt2.io.src1 := ex1Rs1Data
     srt2.io.src2 := ex1Rs2Data
     srt2.io.op := ex1Pkg.op(4, 0)
+    val isDivOp = ex1Pkg.op(4) && ex1Pkg.op(2)
+    val divActive = RegInit(false.B)
+    val divComplete = divActive && srt2.io.ready
+    val divRequest = ex1Pkg.rdValid && isDivOp && (!divActive || divComplete)
+    srt2.io.valid := divRequest
+
+    when(divRequest) {
+        divActive := true.B
+    }.elsewhen(divComplete) {
+        divActive := false.B
+    }
     
     // Multiply实例化（内部有3级流水，结果在EX3阶段有效）
     val multiply = Module(new MulBooth2Wallce)
     multiply.io.src1 := ex1Rs1Data
     multiply.io.src2 := ex1Rs2Data
     multiply.io.op := ex1Pkg.op(4, 0)
-    multiply.io.divBusy := srt2.io.busy
+    multiply.io.divBusy := io.hazard.ex2Stall
     
     // EX1阶段：只保存ALU结果，乘除法器在内部流水
     val ex1PkgOut = ex1Pkg.EX1Update(alu.io.res, 0.U, false.B)
     
     // 输出divBusy信号给Hazard
-    io.hazard.divBusy := srt2.io.busy
+    // Let the request enter EX2, then hold it until the result-ready cycle.
+    io.hazard.divBusy := (divActive && !divComplete) || srt2.io.busy
     
     // ========== EX2阶段 ==========
     val ex2Pkg = RegInit(0.U.asTypeOf(new InstructionPackage))
@@ -63,7 +75,8 @@ class ALUiMDPipeline extends Module {
     // 乘法器内部有2级流水，结果在EX3阶段有效
     // 在EX3阶段捕获乘法器/除法器结果
     val ex3MulRes = multiply.io.res
-    val ex3DivRes = srt2.io.res
+    val completedDivRes = RegEnable(srt2.io.res, 0.U(32.W), srt2.io.ready)
+    val ex3DivRes = Mux(srt2.io.ready, srt2.io.res, completedDivRes)
     
     val ex3Pkg = RegInit(0.U.asTypeOf(new InstructionPackage))
     when(io.hazard.ex3Flush) {
@@ -94,6 +107,11 @@ class ALUiMDPipeline extends Module {
     val wbMulDivRes = Mux(wbIsDiv, ex3DivResReg, ex3MulResReg)
     val wbData = Mux(wbIsMulDiv, wbMulDivRes, wbPkg.aluResult)
     val wbPkgOut = wbPkg.WBUpdate(wbData)
+
+    // Keep the registered package independent from the combinational multiply
+    // result. Consumers that permit this path use ex3GprData explicitly.
+    val ex3IsMul = ex3Pkg.op(4) && !ex3Pkg.op(2)
+    val ex3GprData = Mux(ex3IsMul, ex3MulRes, ex3Pkg.aluResult)
     
     // 写回到寄存器堆
     io.frontend.gprWen := wbPkgOut.rdValid && !wbPkgOut.rd(5)
@@ -107,6 +125,7 @@ class ALUiMDPipeline extends Module {
     io.forward.ex1Pkg := ex1Pkg
     io.forward.ex2Pkg := ex2Pkg
     io.forward.ex3Pkg := ex3Pkg
+    io.forward.ex3GprData := ex3GprData
     io.forward.wbPkg := wbPkgOut
     io.hazard.ex1Pkg := ex1Pkg
     io.hazard.ex2Pkg := ex2Pkg
