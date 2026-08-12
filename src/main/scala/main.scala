@@ -1,8 +1,9 @@
 import chisel3._
 import circt.stage.ChiselStage
 import chisel3.stage.ChiselOption
-object Main extends App {
-    var firtoolOptions = Array(
+
+object GenerateCPU {
+    private val firtoolOptions = Array(
         "-disable-all-randomization", 
         "-strip-debug-info",
         "-strip-fir-debug-info",
@@ -12,12 +13,23 @@ object Main extends App {
         "--lowering-options=noAlwaysComb, disallowPackedArrays, disallowLocalVariables, explicitBitcast, disallowMuxInlining, disallowExpressionInliningInPorts",
         "-o=verilog/",
         "-split-verilog",
-)
-    val isSim = Option(System.getenv("BUILD_MODE")).getOrElse("SYNC") != "SYNC"
-    println(s"isSim: $isSim")
-    ChiselStage.emitSystemVerilogFile(
-        new CPU(),
-        Array("-td", "build/"),
-        firtoolOpts = firtoolOptions,
     )
+
+    def apply(enablePerfCounters: Boolean): Unit = {
+        val isSim = Option(System.getenv("BUILD_MODE")).getOrElse("SYNC") != "SYNC"
+        println(s"isSim: $isSim, enablePerfCounters: $enablePerfCounters")
+        ChiselStage.emitSystemVerilogFile(
+            new CPU(enablePerfCounters),
+            Array("-td", "build/"),
+            firtoolOpts = firtoolOptions,
+        )
+    }
+}
+
+object Main extends App {
+    GenerateCPU(enablePerfCounters = false)
+}
+
+object PerfDebugMain extends App {
+    GenerateCPU(enablePerfCounters = true)
 }

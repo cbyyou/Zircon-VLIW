@@ -5,9 +5,10 @@ import ZirconConfig.EXEOp._
 class HazardIO extends Bundle {
     val frontend = Flipped(new FrontendHazardIO)
     val backend = Flipped(new BackendHazardIO)
+    val events = Output(new HazardEventIO)
 }
 
-class Hazard extends Module {
+class Hazard(enablePerfCounters: Boolean = false) extends Module {
     val io = IO(new HazardIO)
     
     // ========== 默认不产生任何控制信号 ==========
@@ -89,6 +90,11 @@ class Hazard extends Module {
         isMulDiv(op, pipelineIdx) && !op(2)
     }
 
+    def isControl(op: UInt): Bool = {
+        op === BEQ || op === BNE || op === BLT || op === BGE ||
+        op === BLTU || op === BGEU || op === JAL || op === JALR
+    }
+
     def multiplyFeedsControl(pkg: InstructionPackage, rd: UInt): Bool = {
         val isConditional = pkg.op === BEQ || pkg.op === BNE || pkg.op === BLT ||
             pkg.op === BGE || pkg.op === BLTU || pkg.op === BGEU
@@ -115,7 +121,25 @@ class Hazard extends Module {
     
     // 检查RAW冲突：ID阶段的指令依赖EX1或EX2阶段的指令
     val rawHazard = Wire(Bool())
+    val loadRawHazard = Wire(Bool())
+    val integerRawHazard = Wire(Bool())
+    val floatRawHazard = Wire(Bool())
     rawHazard := false.B
+    loadRawHazard := false.B
+    integerRawHazard := false.B
+    floatRawHazard := false.B
+
+    def recordRawProducer(op: UInt, pipelineIdx: Int): Unit = {
+        if (enablePerfCounters) {
+            when(isLoad(op, pipelineIdx)) {
+                loadRawHazard := true.B
+            }.elsewhen(isFloatPipelineOp(op, pipelineIdx) || op === FDIV_S || op === FSQRT_S) {
+                floatRawHazard := true.B
+            }.otherwise {
+                integerRawHazard := true.B
+            }
+        }
+    }
     
     for (idIdx <- 0 until 8) {  // ID阶段的8条指令
         val idPkg = io.frontend.idPkgs(idIdx)
@@ -130,6 +154,7 @@ class Hazard extends Module {
                 val rs3Match = (idIdx < 3).B && (idPkg.rs3 === ex1Pkg.rd)  // 只有前3条流水线有rs3
                 when(rs1Match || rs2Match || rs3Match) {
                     rawHazard := true.B
+                    recordRawProducer(ex1Pkg.op, ex1Idx)
                 }
             }
         }
@@ -143,12 +168,14 @@ class Hazard extends Module {
                 val rs3Match = (idIdx < 3).B && (idPkg.rs3 === ex2Pkg.rd)
                 when(rs1Match || rs2Match || rs3Match) {
                     rawHazard := true.B
+                    recordRawProducer(ex2Pkg.op, ex2Idx)
                 }
             }
             if (idIdx == 7) {
                 when(ex2Pkg.rdValid && isIntegerMul(ex2Pkg.op, ex2Idx) &&
                      multiplyFeedsControl(idPkg, ex2Pkg.rd)) {
                     rawHazard := true.B
+                    recordRawProducer(ex2Pkg.op, ex2Idx)
                 }
             }
         }
@@ -167,6 +194,7 @@ class Hazard extends Module {
                 val rs3Match = (idIdx < 3).B && (idPkg.rs3 === ex3Pkg.rd)
                 when(rs1Match || rs2Match || rs3Match) {
                     rawHazard := true.B
+                    recordRawProducer(ex3Pkg.op, ex3Idx)
                 }
             }
         }
@@ -183,4 +211,28 @@ class Hazard extends Module {
         }
     }
 
+    if (enablePerfCounters) {
+        // Events are observational only and never feed back into hazard control.
+        val rawStallActive = !divStall && !io.backend.predFail && rawHazard
+        val branchFlushActive = !divStall && io.backend.predFail
+        val activeLongLatencyOp = io.backend.ex2Pkgs(0).op
+        val fsqrtStall = fpDivStall && (activeLongLatencyOp === FSQRT_S)
+        val fdivStall = fpDivStall && !fsqrtStall
+        val branchPkg = io.backend.ex2Pkgs(7)
+        val branchResolved = !divStall && isControl(branchPkg.op)
+
+        io.events.rawStall := rawStallActive
+        io.events.loadRaw := rawStallActive && loadRawHazard
+        io.events.integerRaw := rawStallActive && integerRawHazard
+        io.events.floatRaw := rawStallActive && floatRawHazard
+        io.events.intDivBusy := intDivStall
+        io.events.fdivBusy := fdivStall
+        io.events.fsqrtBusy := fsqrtStall
+        io.events.branchResolved := branchResolved
+        io.events.branchTaken := branchPkg.branchTaken
+        io.events.branchMispredict := branchResolved && io.backend.predFail
+        io.events.branchFlush := branchFlushActive
+    } else {
+        io.events := 0.U.asTypeOf(new HazardEventIO)
+    }
 }

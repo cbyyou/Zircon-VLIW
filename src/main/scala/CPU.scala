@@ -19,6 +19,23 @@ class CPUDebugIO extends Bundle {
     val branchTgt = Output(UInt(32.W))
     val hazardFlush = Output(Bool())
     val hazardStall = Output(Bool())
+
+    // Hazard performance counters
+    val cycleCount = Output(UInt(64.W))
+    val totalStallCycles = Output(UInt(64.W))
+    val rawStallCycles = Output(UInt(64.W))
+    val loadRawStallCycles = Output(UInt(64.W))
+    val integerRawStallCycles = Output(UInt(64.W))
+    val floatRawStallCycles = Output(UInt(64.W))
+    val mixedRawStallCycles = Output(UInt(64.W))
+    val intDivOnlyStallCycles = Output(UInt(64.W))
+    val fdivOnlyStallCycles = Output(UInt(64.W))
+    val fsqrtOnlyStallCycles = Output(UInt(64.W))
+    val longLatencyOverlapStallCycles = Output(UInt(64.W))
+    val branchCount = Output(UInt(64.W))
+    val branchTakenCount = Output(UInt(64.W))
+    val branchMispredictCount = Output(UInt(64.W))
+    val branchFlushCycles = Output(UInt(64.W))
 }
 
 // CPU的顶层IO：对外提供仿真环境的内存接口
@@ -28,13 +45,19 @@ class CPUIO extends Bundle {
     val debug = new CPUDebugIO       // 调试接口
 }
 
-class CPU extends Module {
+class CPU(enablePerfCounters: Boolean = false) extends Module {
     val io = IO(new CPUIO)
     
     // ========== 实例化三大模块 ==========
     val frontend = Module(new Frontend)
     val backend = Module(new Backend)
-    val hazard = Module(new Hazard)
+    val hazard = Module(new Hazard(enablePerfCounters))
+    val perfCounters = WireDefault(0.U.asTypeOf(new StallPerformanceCounterValues))
+    if (enablePerfCounters) {
+        val performanceMonitor = Module(new StallPerformanceMonitor)
+        performanceMonitor.io.events := hazard.io.events
+        perfCounters := performanceMonitor.io.counters
+    }
     
     // ========== 连接Frontend和Backend ==========
     // Frontend -> Backend: 指令包
@@ -84,4 +107,19 @@ class CPU extends Module {
     io.debug.branchTgt := backend.io.frontend.branchTgt
     io.debug.hazardFlush := hazard.io.frontend.flush
     io.debug.hazardStall := hazard.io.frontend.stall
+    io.debug.cycleCount := perfCounters.cycleCount
+    io.debug.totalStallCycles := perfCounters.totalStallCycles
+    io.debug.rawStallCycles := perfCounters.rawStallCycles
+    io.debug.loadRawStallCycles := perfCounters.loadRawStallCycles
+    io.debug.integerRawStallCycles := perfCounters.integerRawStallCycles
+    io.debug.floatRawStallCycles := perfCounters.floatRawStallCycles
+    io.debug.mixedRawStallCycles := perfCounters.mixedRawStallCycles
+    io.debug.intDivOnlyStallCycles := perfCounters.intDivOnlyStallCycles
+    io.debug.fdivOnlyStallCycles := perfCounters.fdivOnlyStallCycles
+    io.debug.fsqrtOnlyStallCycles := perfCounters.fsqrtOnlyStallCycles
+    io.debug.longLatencyOverlapStallCycles := perfCounters.longLatencyOverlapStallCycles
+    io.debug.branchCount := perfCounters.branchCount
+    io.debug.branchTakenCount := perfCounters.branchTakenCount
+    io.debug.branchMispredictCount := perfCounters.branchMispredictCount
+    io.debug.branchFlushCycles := perfCounters.branchFlushCycles
 }
