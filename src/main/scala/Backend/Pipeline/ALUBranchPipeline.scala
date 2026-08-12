@@ -48,6 +48,11 @@ class ALUBranchPipelineHazardIO extends PipelineHazardIO {
     // 分支预测失败信号和跳转地址
     val predFail   = Output(Bool())
     val branchTgt  = Output(UInt(32.W))
+    val branchUpdateValid = Output(Bool())
+    val branchUpdatePC = Output(UInt(32.W))
+    val branchUpdateInst = Output(UInt(32.W))
+    val branchUpdateTaken = Output(Bool())
+    val branchUpdateTarget = Output(UInt(32.W))
 }
 
 class ALUBranchPipelineIO extends Bundle {
@@ -84,9 +89,17 @@ class ALUBranchPipeline extends Module {
     branch.io.op := ex1Pkg.op
     branch.io.pc := ex1Pkg.pc
     branch.io.imm := ex1Pkg.imm
+    branch.io.predTaken := ex1Pkg.predTaken
+    branch.io.predTarget := ex1Pkg.predTarget
     
     // EX1阶段更新InstPkg
-    val ex1PkgOut = ex1Pkg.EX1Update(alu.io.res, branch.io.branchTgt, branch.io.predFail)
+    val ex1PkgOut = ex1Pkg.EX1Update(
+        alu.io.res,
+        branch.io.branchTgt,
+        branch.io.predFail,
+        branch.io.actualTaken,
+        branch.io.actualTarget
+    )
     
     // ========== EX2阶段 ==========
     // EX1-EX2段间寄存器
@@ -100,6 +113,19 @@ class ALUBranchPipeline extends Module {
     // Branch结果在EX2阶段送出（为了时序打一拍）
     io.hazard.predFail := ex2Pkg.predFail
     io.hazard.branchTgt := ex2Pkg.branchTgt
+    val ex2IsControl = ex2Pkg.op === ZirconConfig.EXEOp.BEQ ||
+                       ex2Pkg.op === ZirconConfig.EXEOp.BNE ||
+                       ex2Pkg.op === ZirconConfig.EXEOp.BLT ||
+                       ex2Pkg.op === ZirconConfig.EXEOp.BGE ||
+                       ex2Pkg.op === ZirconConfig.EXEOp.BLTU ||
+                       ex2Pkg.op === ZirconConfig.EXEOp.BGEU ||
+                       ex2Pkg.op === ZirconConfig.EXEOp.JAL ||
+                       ex2Pkg.op === ZirconConfig.EXEOp.JALR
+    io.hazard.branchUpdateValid := ex2IsControl && !io.hazard.ex3Stall
+    io.hazard.branchUpdatePC := ex2Pkg.pc
+    io.hazard.branchUpdateInst := ex2Pkg.inst
+    io.hazard.branchUpdateTaken := ex2Pkg.branchTaken
+    io.hazard.branchUpdateTarget := ex2Pkg.actualBranchTarget
     
     // ========== EX3阶段 ==========
     // EX2-EX3段间寄存器
@@ -139,4 +165,3 @@ class ALUBranchPipeline extends Module {
     io.hazard.ex1Pkg := ex1Pkg
     io.hazard.ex2Pkg := ex2Pkg
 }
-

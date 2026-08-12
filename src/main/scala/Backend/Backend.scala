@@ -23,6 +23,11 @@ class BackendFrontendIO extends Bundle {
     // 分支预测失败信号和跳转地址
     val predFail = Output(Bool())
     val branchTgt = Output(UInt(32.W))
+    val branchUpdateValid = Output(Bool())
+    val branchUpdatePC = Output(UInt(32.W))
+    val branchUpdateInst = Output(UInt(32.W))
+    val branchUpdateTaken = Output(Bool())
+    val branchUpdateTarget = Output(UInt(32.W))
 }
 
 // Backend与Hazard的接口
@@ -164,6 +169,11 @@ class Backend extends Module {
     io.hazard.branchTgt := pipeline7.io.hazard.branchTgt
     io.frontend.predFail := pipeline7.io.hazard.predFail
     io.frontend.branchTgt := pipeline7.io.hazard.branchTgt
+    io.frontend.branchUpdateValid := pipeline7.io.hazard.branchUpdateValid
+    io.frontend.branchUpdatePC := pipeline7.io.hazard.branchUpdatePC
+    io.frontend.branchUpdateInst := pipeline7.io.hazard.branchUpdateInst
+    io.frontend.branchUpdateTaken := pipeline7.io.hazard.branchUpdateTaken
+    io.frontend.branchUpdateTarget := pipeline7.io.hazard.branchUpdateTarget
     
     // ========== 汇总写回信号到Frontend（使用循环）==========
     // GPR写口分配：流水线0-7各1个，共8个
