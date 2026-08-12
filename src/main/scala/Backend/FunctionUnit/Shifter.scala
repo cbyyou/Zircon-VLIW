@@ -11,12 +11,16 @@ object Shifter {
 
     class Shifter extends Module{
         val io = IO(new ShifterIO(32))
-        // 桶形移位器，实现右移
-        val candidates = Wire(Vec(32, UInt(32.W)))
-        for (i <- 0 until 32){
-            candidates(i) := VecInit.fill(i)(Mux(io.sgn, io.src(31), 0.U(1.W))).asUInt ## io.src(31, i)
+        // Five explicit mux stages implement a logarithmic right shifter.
+        // SLL continues to reuse this datapath by reversing input and output.
+        var shifted = io.src
+        for (stage <- 0 until 5) {
+            val amount = 1 << stage
+            val fill = Fill(amount, io.sgn && io.src(31))
+            val shiftedByAmount = Cat(fill, shifted(31, amount))
+            shifted = Mux(io.shf(stage), shiftedByAmount, shifted)
         }
-        io.res := candidates(io.shf)
+        io.res := shifted
     }
 
     object Shifter {

@@ -132,12 +132,14 @@ class MulBooth2Wallce extends Module {
         sumWallce(i) := wallce.sum
         coutWallce(i) := wallce.cout
     }
-    // full adder
-    val faddSrc1 = ShiftRegister(sumWallce.asUInt, 1, 0.U, !io.divBusy)
-    val faddSrc2 = ShiftRegister(VecInit(coutWallce.map(_(15))).asUInt(62, 0) ## add1Wallce(15), 1, 0.U, !io.divBusy)
-    val faddCin  = ShiftRegister(add1Wallce(16).asUInt, 1, 0.U, !io.divBusy)
+    // Split three prefix levels across the existing Wallace/final-adder
+    // boundary. This balances the two stages without changing latency.
+    val fadd = Module(new PipelinedPrefixAdder64(preLevels = 3))
+    fadd.io.src1 := sumWallce.asUInt
+    fadd.io.src2 := VecInit(coutWallce.map(_(15))).asUInt(62, 0) ## add1Wallce(15)
+    fadd.io.cin := add1Wallce(16).asUInt
+    fadd.io.enable := !io.divBusy
     val faddOp   = ShiftRegister(opWallce, 1, 0.U, !io.divBusy)
-    val fadd = BLevelPAdder64(faddSrc1, faddSrc2, faddCin)
     io.res := fadd.io.res(63, 32)
     switch(faddOp){
         is(MUL)     { io.res := fadd.io.res(31, 0) }

@@ -43,62 +43,160 @@ class BLevelAdder5 extends Module {
 
 class BLevelPAdder32 extends Module{
     val io = IO(new AdderIO(32))
-    val pi = io.src1 | io.src2;
-    val gi = io.src1 & io.src2;
-
-    val p = Wire(MixedVec(Vec(8, UInt(1.W)), Vec(2, UInt(1.W))))
-    val g = Wire(MixedVec(Vec(8, UInt(1.W)), Vec(2, UInt(1.W))))
-    val c = Wire(MixedVec(Vec(8, UInt(4.W)), Vec(2, UInt(4.W)), Vec(1, UInt(4.W))))
-
-    for (i <- 0 until 8){
-        val cin = if(i == 0) io.cin else if(i == 4) c(2).asUInt(0) else c(1).asUInt(i-1)
-        val (p0n, g0n, c0n) = BLevelCarry4(pi(i*4+3, i*4), gi(i*4+3, i*4), cin)
-        p(0)(i) := p0n
-        g(0)(i) := g0n
-        c(0)(i) := c0n
+    val bitPropagate = Wire(Vec(32, Bool()))
+    val bitGenerate = Wire(Vec(32, Bool()))
+    for (i <- 0 until 32) {
+        bitPropagate(i) := io.src1(i) ^ io.src2(i)
+        bitGenerate(i) := io.src1(i) & io.src2(i)
     }
-    for (i <- 0 until 2){
-        val cin = if(i == 0) io.cin else c(2).asUInt(i-1)
-        val (p1n, g1n, c1n) = BLevelCarry4(p(0).asUInt(i*4+3, i*4), g(0).asUInt(i*4+3, i*4), cin)
-        p(1)(i) := p1n
-        g(1)(i) := g1n
-        c(1)(i) := c1n
+
+    // Five prefix levels cover 1, 2, 4, 8 and 16 lower bits.
+    var levelPropagate: Vec[Bool] = bitPropagate
+    var levelGenerate: Vec[Bool] = bitGenerate
+    var distance = 1
+    while (distance < 32) {
+        val nextPropagate = Wire(Vec(32, Bool()))
+        val nextGenerate = Wire(Vec(32, Bool()))
+        for (i <- 0 until 32) {
+            if (i >= distance) {
+                nextGenerate(i) := levelGenerate(i) |
+                    (levelPropagate(i) & levelGenerate(i - distance))
+                nextPropagate(i) := levelPropagate(i) & levelPropagate(i - distance)
+            } else {
+                nextGenerate(i) := levelGenerate(i)
+                nextPropagate(i) := levelPropagate(i)
+            }
+        }
+        levelPropagate = nextPropagate
+        levelGenerate = nextGenerate
+        distance = distance << 1
     }
-        
-    val (p2n, g2n, c2n) = BLevelCarry4(0.U(2.W) ## p(1).asUInt, 0.U(2.W) ## g(1).asUInt, io.cin)
-    c(2)(0) := c2n
-    io.res := io.src1 ^ io.src2 ^ (c(0).asUInt(30, 0) ## io.cin)
-    io.cout := c(0).asUInt(31)
+
+    val carry = Wire(Vec(33, Bool()))
+    carry(0) := io.cin(0)
+    for (i <- 0 until 32) {
+        carry(i + 1) := levelGenerate(i) | (levelPropagate(i) & io.cin(0))
+    }
+
+    io.res := VecInit((0 until 32).map(i => bitPropagate(i) ^ carry(i))).asUInt
+    io.cout := carry(32)
 }
 
 class BLevelPAdder64 extends Module{
     val io = IO(new AdderIO(64))
-    val pi = io.src1 | io.src2;
-    val gi = io.src1 & io.src2;
-
-    val p = Wire(MixedVec(Vec(16, UInt(1.W)), Vec(4, UInt(1.W))))
-    val g = Wire(MixedVec(Vec(16, UInt(1.W)), Vec(4, UInt(1.W))))
-    val c = Wire(MixedVec(Vec(16, UInt(4.W)), Vec(4, UInt(4.W)), Vec(1, UInt(4.W))))
-
-    for (i <- 0 until 16){
-        val cin = if(i == 0) io.cin else if(i % 4 == 0) c(2).asUInt(i / 4 - 1) else c(1).asUInt(i-1)
-        val (p0n, g0n, c0n) = BLevelCarry4(pi(i*4+3, i*4), gi(i*4+3, i*4), cin)
-        p(0)(i) := p0n
-        g(0)(i) := g0n
-        c(0)(i) := c0n
-    }
-    for (i <- 0 until 4){
-        val cin = if(i == 0) io.cin else c(2).asUInt(i-1)
-        val (p1n, g1n, c1n) = BLevelCarry4(p(0).asUInt(i*4+3, i*4), g(0).asUInt(i*4+3, i*4), cin)
-        p(1)(i) := p1n
-        g(1)(i) := g1n
-        c(1)(i) := c1n
+    val bitPropagate = Wire(Vec(64, Bool()))
+    val bitGenerate = Wire(Vec(64, Bool()))
+    for (i <- 0 until 64) {
+        bitPropagate(i) := io.src1(i) ^ io.src2(i)
+        bitGenerate(i) := io.src1(i) & io.src2(i)
     }
 
-    val (p2n, g2n, c2n) = BLevelCarry4(p(1).asUInt, g(1).asUInt, io.cin)
-    c(2)(0) := c2n
-    io.res := io.src1 ^ io.src2 ^ (c(0).asUInt(62, 0) ## io.cin)
-    io.cout := c(0).asUInt(63)
+    var levelPropagate: Vec[Bool] = bitPropagate
+    var levelGenerate: Vec[Bool] = bitGenerate
+    var distance = 1
+    while (distance < 64) {
+        val nextPropagate = Wire(Vec(64, Bool()))
+        val nextGenerate = Wire(Vec(64, Bool()))
+        for (i <- 0 until 64) {
+            if (i >= distance) {
+                nextGenerate(i) := levelGenerate(i) |
+                    (levelPropagate(i) & levelGenerate(i - distance))
+                nextPropagate(i) := levelPropagate(i) & levelPropagate(i - distance)
+            } else {
+                nextGenerate(i) := levelGenerate(i)
+                nextPropagate(i) := levelPropagate(i)
+            }
+        }
+        levelPropagate = nextPropagate
+        levelGenerate = nextGenerate
+        distance = distance << 1
+    }
+
+    val carry = Wire(Vec(65, Bool()))
+    carry(0) := io.cin(0)
+    for (i <- 0 until 64) {
+        carry(i + 1) := levelGenerate(i) | (levelPropagate(i) & io.cin(0))
+    }
+
+    io.res := VecInit((0 until 64).map(i => bitPropagate(i) ^ carry(i))).asUInt
+    io.cout := carry(64)
+}
+
+class PipelinedPrefixAdder64(val preLevels: Int = 2) extends Module {
+    require(preLevels >= 1 && preLevels < 6)
+
+    val io = IO(new AdderIO(64) {
+        val enable = Input(Bool())
+    })
+
+    val basePropagate = Wire(Vec(64, Bool()))
+    val baseGenerate = Wire(Vec(64, Bool()))
+    for (i <- 0 until 64) {
+        basePropagate(i) := io.src1(i) ^ io.src2(i)
+        baseGenerate(i) := io.src1(i) & io.src2(i)
+    }
+
+    var prePropagate: Vec[Bool] = basePropagate
+    var preGenerate: Vec[Bool] = baseGenerate
+    var preDistance = 1
+    for (_ <- 0 until preLevels) {
+        val nextPropagate = Wire(Vec(64, Bool()))
+        val nextGenerate = Wire(Vec(64, Bool()))
+        for (i <- 0 until 64) {
+            if (i >= preDistance) {
+                nextGenerate(i) := preGenerate(i) |
+                    (prePropagate(i) & preGenerate(i - preDistance))
+                nextPropagate(i) := prePropagate(i) & prePropagate(i - preDistance)
+            } else {
+                nextGenerate(i) := preGenerate(i)
+                nextPropagate(i) := prePropagate(i)
+            }
+        }
+        prePropagate = nextPropagate
+        preGenerate = nextGenerate
+        preDistance = preDistance << 1
+    }
+
+    val basePropagateReg = RegInit(VecInit(Seq.fill(64)(false.B)))
+    val prePropagateReg = RegInit(VecInit(Seq.fill(64)(false.B)))
+    val preGenerateReg = RegInit(VecInit(Seq.fill(64)(false.B)))
+    val cinReg = RegInit(false.B)
+    when(io.enable) {
+        basePropagateReg := basePropagate
+        prePropagateReg := prePropagate
+        preGenerateReg := preGenerate
+        cinReg := io.cin.asBool
+    }
+
+    var postPropagate: Vec[Bool] = prePropagateReg
+    var postGenerate: Vec[Bool] = preGenerateReg
+    var postDistance = 1 << preLevels
+    while (postDistance < 64) {
+        val nextPropagate = Wire(Vec(64, Bool()))
+        val nextGenerate = Wire(Vec(64, Bool()))
+        for (i <- 0 until 64) {
+            if (i >= postDistance) {
+                nextGenerate(i) := postGenerate(i) |
+                    (postPropagate(i) & postGenerate(i - postDistance))
+                nextPropagate(i) := postPropagate(i) & postPropagate(i - postDistance)
+            } else {
+                nextGenerate(i) := postGenerate(i)
+                nextPropagate(i) := postPropagate(i)
+            }
+        }
+        postPropagate = nextPropagate
+        postGenerate = nextGenerate
+        postDistance = postDistance << 1
+    }
+
+    val carry = Wire(Vec(65, Bool()))
+    carry(0) := cinReg
+    for (i <- 0 until 64) {
+        carry(i + 1) := postGenerate(i) | (postPropagate(i) & cinReg)
+    }
+
+    io.res := VecInit((0 until 64).map(i => basePropagateReg(i) ^ carry(i))).asUInt
+    io.cout := carry(64)
 }
 
 class BLevelPAdder33 extends Module{
@@ -156,4 +254,3 @@ object BLevelPAdder64{
         adder
     }
 }
-    
